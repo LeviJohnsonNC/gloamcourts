@@ -32,6 +32,8 @@ export interface Tracks {
 export type Stance = 'Aggressive' | 'Guarded' | 'Cunning';
 export type RangeBand = 'Engaged' | 'Near' | 'Far';
 
+export type RollContext = 'social' | 'investigation' | 'combat_attack' | 'combat_defense' | 'hex' | 'stealth' | 'endurance' | 'general' | 'court_social' | 'perception' | 'occult' | 'bargaining';
+
 export interface Trait {
   key: string;
   name: string;
@@ -43,9 +45,10 @@ export interface Trait {
 export interface TraitMechanical {
   type: 'bonus_die' | 'start_bonus' | 'reroll' | 'convert_die';
   stat?: StatName;
-  context?: string;
+  context?: RollContext;
   bonus?: number;
   resource?: keyof Resources;
+  once_per_run?: boolean;
 }
 
 export interface InventoryItem {
@@ -58,7 +61,7 @@ export interface InventoryItem {
 export interface StatusEffect {
   key: string;
   name: string;
-  source: 'madness' | 'taint' | 'other';
+  source: 'madness' | 'taint' | 'trait' | 'other';
   description: string;
 }
 
@@ -74,6 +77,8 @@ export interface RollOutcome {
   opposingRoll?: DiceResult;
   margin: number;
   outcome: 'critical_success' | 'success' | 'partial' | 'failure' | 'critical_failure';
+  stat_used?: StatName;
+  roll_context?: RollContext;
 }
 
 export type ChoiceType = 'free' | 'test' | 'combat' | 'gated';
@@ -96,6 +101,7 @@ export interface Choice {
   item_gain?: InventoryItem;
   resource_change?: Partial<Resources>;
   track_change?: Partial<Tracks>;
+  roll_context?: RollContext;
 }
 
 export interface Section {
@@ -114,6 +120,8 @@ export interface Section {
   combat_enemy?: CombatEnemy;
   codex_unlock?: string;
   rumor_unlock?: string;
+  requires_codex_keys?: string[];
+  alternate_section?: number;
 }
 
 export interface CombatEnemy {
@@ -124,13 +132,17 @@ export interface CombatEnemy {
   stance: Stance;
   is_boss: boolean;
   description: string;
+  engaged_bonus?: number;
 }
+
+export type CombatAction = 'attack' | 'defend' | 'trick' | 'flee' | 'advance' | 'withdraw';
 
 export interface AdventureOutline {
   title: string;
   seed: string;
   sections: Section[];
   start_section: number;
+  required_codex_keys?: string[];
 }
 
 export interface GameState {
@@ -148,6 +160,7 @@ export interface GameState {
   trait_key: string;
   character_description: string;
   combat_state?: CombatState;
+  used_trait_abilities?: string[];
 }
 
 export interface CombatState {
@@ -171,7 +184,7 @@ export const TRAITS: Trait[] = [
     name: 'Silver Tongue',
     flavor: 'Your lies taste like honey and your truths sting like wasps.',
     effect: '+1 die on GUILE when bargaining or deceiving',
-    mechanical: { type: 'bonus_die', stat: 'GUILE', context: 'bargaining', bonus: 1 },
+    mechanical: { type: 'bonus_die', stat: 'GUILE', context: 'social', bonus: 1 },
   },
   {
     key: 'lucky_fool',
@@ -199,21 +212,21 @@ export const TRAITS: Trait[] = [
     name: 'Third Eye',
     flavor: "You see what others miss. Unfortunately, this includes things you'd rather not.",
     effect: '+1 die on WITS for perception and investigation',
-    mechanical: { type: 'bonus_die', stat: 'WITS', context: 'perception', bonus: 1 },
+    mechanical: { type: 'bonus_die', stat: 'WITS', context: 'investigation', bonus: 1 },
   },
   {
     key: 'hexblood',
     name: 'Hexblood',
     flavor: 'Something in your ancestry was not entirely human. Family reunions are complicated.',
     effect: '+1 die on HEX for all occult interactions',
-    mechanical: { type: 'bonus_die', stat: 'HEX', context: 'occult', bonus: 1 },
+    mechanical: { type: 'bonus_die', stat: 'HEX', context: 'hex', bonus: 1 },
   },
   {
     key: 'deaths_jest',
     name: "Death's Jest",
     flavor: 'You have died before. You found it underwhelming.',
     effect: 'Once per run, turn a die showing 1 into a 10',
-    mechanical: { type: 'convert_die' },
+    mechanical: { type: 'convert_die', once_per_run: true },
   },
   {
     key: 'court_bred',
@@ -235,3 +248,33 @@ export const TAINT_THRESHOLDS: Record<number, StatusEffect> = {
   7: { key: 'corrupted', name: 'Corrupted', source: 'taint', description: 'Your flesh remembers shapes it should not know. +1 Madness per combat.' },
   10: { key: 'abomination', name: 'Abomination', source: 'taint', description: 'You are no longer entirely yourself. This is, depending on your perspective, an upgrade.' },
 };
+
+// Map roll contexts to determine trait applicability
+export function getTraitBonus(traitKey: string, stat: StatName, context?: RollContext): number {
+  const trait = TRAITS.find(t => t.key === traitKey);
+  if (!trait || trait.mechanical.type !== 'bonus_die') return 0;
+  if (trait.mechanical.stat && trait.mechanical.stat !== stat) return 0;
+  
+  // If trait has a context, check if it matches or is a parent category
+  if (trait.mechanical.context) {
+    if (!context) return 0;
+    const contextMap: Record<string, RollContext[]> = {
+      'social': ['social', 'court_social', 'bargaining'],
+      'investigation': ['investigation', 'perception'],
+      'combat_attack': ['combat_attack'],
+      'combat_defense': ['combat_defense', 'stealth'],
+      'hex': ['hex', 'occult'],
+      'stealth': ['stealth', 'combat_defense'],
+      'endurance': ['endurance'],
+      'court_social': ['court_social', 'social'],
+      'perception': ['perception', 'investigation'],
+      'occult': ['occult', 'hex'],
+      'bargaining': ['bargaining', 'social'],
+      'general': ['general'],
+    };
+    const validContexts = contextMap[trait.mechanical.context] || [trait.mechanical.context];
+    if (!validContexts.includes(context)) return 0;
+  }
+
+  return trait.mechanical.bonus || 0;
+}

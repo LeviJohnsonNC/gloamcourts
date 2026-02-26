@@ -1,4 +1,4 @@
-import { CombatState, CombatEnemy, GameState, RollOutcome, Stance } from './types';
+import { CombatState, CombatEnemy, GameState, RollOutcome, Stance, RangeBand, CombatAction } from './types';
 import { opposedRoll, getPoolSize, getTargetNumber } from './dice';
 
 export function initCombat(enemy: CombatEnemy, gameState: GameState): CombatState {
@@ -12,29 +12,73 @@ export function initCombat(enemy: CombatEnemy, gameState: GameState): CombatStat
   };
 }
 
+function moveRange(current: RangeBand, direction: 'closer' | 'farther'): RangeBand {
+  const order: RangeBand[] = ['Engaged', 'Near', 'Far'];
+  const idx = order.indexOf(current);
+  if (direction === 'closer') return order[Math.max(0, idx - 1)];
+  return order[Math.min(order.length - 1, idx + 1)];
+}
+
 export function resolveCombatRound(
   gameState: GameState,
   combatState: CombatState,
-  playerAction: 'attack' | 'defend' | 'trick' | 'flee',
+  playerAction: CombatAction,
   rng?: () => number
 ): { gameState: GameState; combatState: CombatState; rollOutcome: RollOutcome; narrative: string } {
   const newGameState = { ...gameState, resources: { ...gameState.resources }, tracks: { ...gameState.tracks } };
-  const newCombat = { ...combatState, log: [...combatState.log] };
+  const newCombat = { ...combatState, log: [...combatState.log], player_range: combatState.player_range };
+
+  const getRollContext = () => {
+    if (playerAction === 'attack') return 'combat_attack' as const;
+    if (playerAction === 'defend') return 'combat_defense' as const;
+    if (playerAction === 'trick') return 'social' as const;
+    return 'combat_defense' as const;
+  };
 
   let playerStat = playerAction === 'attack' ? 'STEEL' as const :
     playerAction === 'defend' ? 'GRACE' as const :
-    playerAction === 'trick' ? 'GUILE' as const : 'GRACE' as const;
+    playerAction === 'trick' ? 'GUILE' as const :
+    playerAction === 'advance' ? 'GRACE' as const :
+    playerAction === 'withdraw' ? 'GRACE' as const :
+    'GRACE' as const;
 
   const isAttack = playerAction === 'attack';
-  const playerPool = getPoolSize(playerStat, gameState.stats, combatState.player_stance, isAttack, gameState.status_effects);
+  const hasRanged = gameState.inventory.some(i => i.tags.includes('ranged'));
+  const playerPool = getPoolSize(
+    playerStat, gameState.stats, combatState.player_stance, isAttack,
+    gameState.status_effects, 0,
+    gameState.trait_key, getRollContext(),
+    combatState.player_range, hasRanged,
+    combatState.enemy.engaged_bonus
+  );
   const playerTn = getTargetNumber(combatState.enemy.tn, gameState.status_effects);
   const enemyPool = combatState.enemy.pool;
   const enemyTn = combatState.enemy.tn;
 
   const rollOutcome = opposedRoll(playerPool, playerTn, enemyPool, enemyTn, rng);
+  rollOutcome.stat_used = playerStat;
+  rollOutcome.roll_context = getRollContext();
   let narrative = '';
 
-  if (playerAction === 'flee') {
+  if (playerAction === 'advance') {
+    if (rollOutcome.outcome === 'success' || rollOutcome.outcome === 'critical_success') {
+      newCombat.player_range = moveRange(combatState.player_range, 'closer');
+      narrative = `You close the distance! Now at ${newCombat.player_range} range.`;
+    } else {
+      const dmg = Math.max(1, Math.abs(rollOutcome.margin));
+      newGameState.resources.health -= dmg;
+      narrative = `You lunge forward but ${combatState.enemy.name} punishes you for ${dmg} damage!`;
+    }
+  } else if (playerAction === 'withdraw') {
+    if (rollOutcome.outcome === 'success' || rollOutcome.outcome === 'critical_success') {
+      newCombat.player_range = moveRange(combatState.player_range, 'farther');
+      narrative = `You create distance! Now at ${newCombat.player_range} range.`;
+    } else {
+      const dmg = Math.max(1, Math.abs(rollOutcome.margin));
+      newGameState.resources.health -= dmg;
+      narrative = `You try to disengage but ${combatState.enemy.name} follows and strikes for ${dmg} damage!`;
+    }
+  } else if (playerAction === 'flee') {
     if (rollOutcome.outcome === 'success' || rollOutcome.outcome === 'critical_success') {
       narrative = `You disengage from ${combatState.enemy.name} and escape!`;
       newCombat.enemy_health = -1; // signal flee success
@@ -44,6 +88,7 @@ export function resolveCombatRound(
       narrative = `You try to flee but ${combatState.enemy.name} catches you for ${dmg} damage!`;
     }
   } else if (playerAction === 'attack') {
+    // Attack tends to pull to Engaged
     if (rollOutcome.margin > 0) {
       const dmg = rollOutcome.margin;
       newCombat.enemy_health -= dmg;
@@ -51,6 +96,11 @@ export function resolveCombatRound(
       if (rollOutcome.outcome === 'critical_success') {
         narrative += ' A devastating blow!';
         newCombat.enemy_health -= 1;
+      }
+      // Pull to Engaged on successful attack
+      if (combatState.player_range === 'Near') {
+        newCombat.player_range = 'Engaged';
+        narrative += ' You close to engaged range.';
       }
     } else {
       const dmg = Math.max(1, Math.abs(rollOutcome.margin));
@@ -76,6 +126,13 @@ export function resolveCombatRound(
       if (combatState.player_stance === 'Cunning') {
         newCombat.enemy_health -= 1;
         narrative += ' Your cunning stance amplifies the effect!';
+      }
+      // Trick can push/pull range if margin >= 2
+      if (rollOutcome.margin >= 2) {
+        const newRange = combatState.player_range === 'Engaged' ? 'Near' : 
+                         combatState.player_range === 'Near' ? 'Far' : 'Near';
+        newCombat.player_range = newRange;
+        narrative += ` You reposition to ${newRange} range!`;
       }
     } else {
       const dmg = Math.max(1, Math.abs(rollOutcome.margin));

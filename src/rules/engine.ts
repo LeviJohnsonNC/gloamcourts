@@ -29,6 +29,7 @@ export function createInitialGameState(
     log: [{ section: startSection, text: 'Your journey begins.', timestamp: Date.now() }],
     trait_key: traitKey,
     character_description: characterDescription,
+    used_trait_abilities: [],
   };
 }
 
@@ -47,7 +48,6 @@ export function applyTrackChange(state: GameState, change: Partial<Tracks>): Gam
   if (change.madness !== undefined) {
     const oldVal = newTracks.madness;
     newTracks.madness = Math.max(0, Math.min(10, newTracks.madness + change.madness));
-    // Check thresholds
     for (const [threshold, effect] of Object.entries(MADNESS_THRESHOLDS)) {
       const t = Number(threshold);
       if (oldVal < t && newTracks.madness >= t && !newEffects.find(e => e.key === effect.key)) {
@@ -94,8 +94,18 @@ export function spendFocus(state: GameState): GameState | null {
 }
 
 export function embraceDarkness(state: GameState, track: 'madness' | 'taint'): GameState {
-  // +2 dice bonus for next roll, +1 to chosen track
   return applyTrackChange(state, { [track]: 1 });
+}
+
+export function useTraitAbility(state: GameState, abilityKey: string): GameState {
+  return {
+    ...state,
+    used_trait_abilities: [...(state.used_trait_abilities || []), abilityKey],
+  };
+}
+
+export function hasUsedTraitAbility(state: GameState, abilityKey: string): boolean {
+  return (state.used_trait_abilities || []).includes(abilityKey);
 }
 
 export function canMakeGatedChoice(state: GameState, choice: Choice): boolean {
@@ -103,8 +113,7 @@ export function canMakeGatedChoice(state: GameState, choice: Choice): boolean {
     return state.inventory.some(item => item.tags.includes(choice.required_item_tag!));
   }
   if (choice.required_codex_key) {
-    // This will be checked against codex_unlocks from DB
-    return true; // placeholder - checked at UI level
+    return true; // checked at UI level with DB
   }
   return true;
 }
@@ -123,7 +132,7 @@ export function serializeGameState(state: GameState) {
     range_band: state.range_band,
     inventory_json: state.inventory,
     visited_sections: state.visited_sections,
-    status_effects_json: state.status_effects,
+    status_effects_json: [...state.status_effects, ...(state.used_trait_abilities || []).map(k => ({ key: `used_${k}`, name: `Used ${k}`, source: 'trait' as const, description: 'Trait ability used' }))],
     log_json: state.log,
     trait_key: state.trait_key,
     character_description: state.character_description,
@@ -132,6 +141,10 @@ export function serializeGameState(state: GameState) {
 }
 
 export function deserializeGameState(runId: string, data: any): GameState {
+  const allEffects = (data.status_effects_json || []) as any[];
+  const traitUsed = allEffects.filter((e: any) => e.source === 'trait' && e.key?.startsWith('used_')).map((e: any) => e.key.replace('used_', ''));
+  const statusEffects = allEffects.filter((e: any) => e.source !== 'trait' || !e.key?.startsWith('used_'));
+  
   return {
     run_id: runId,
     current_section: data.current_section,
@@ -142,9 +155,10 @@ export function deserializeGameState(runId: string, data: any): GameState {
     range_band: data.range_band,
     inventory: data.inventory_json || [],
     visited_sections: data.visited_sections || [],
-    status_effects: data.status_effects_json || [],
+    status_effects: statusEffects,
     log: data.log_json || [],
     trait_key: data.trait_key || '',
     character_description: data.character_description || '',
+    used_trait_abilities: traitUsed,
   };
 }
