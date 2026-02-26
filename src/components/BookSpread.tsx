@@ -1,23 +1,31 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Section, Choice, GameState, CombatState, Stance } from '@/rules/types';
+import { Section, Choice, GameState, CombatState, Stance, CombatAction, RangeBand } from '@/rules/types';
 import { canMakeGatedChoice } from '@/rules/engine';
 import InkPlate from './InkPlate';
-import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull } from 'lucide-react';
+import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame } from 'lucide-react';
 
 interface BookSpreadProps {
   section: Section;
   gameState: GameState;
   combatState: CombatState | null;
   onChoice: (choice: Choice) => void;
-  onCombatAction: (action: 'attack' | 'defend' | 'trick' | 'flee') => void;
+  onCombatAction: (action: CombatAction) => void;
   onChangeCombatStance: (stance: Stance) => void;
   onDeath: () => void;
   onEnding: () => void;
+  onNewRun?: () => void;
+  onReturnHome?: () => void;
+  onEmbraceDarkness?: (track: 'madness' | 'taint') => void;
+  focusSpent?: boolean;
+  onSpendFocus?: () => void;
+  embraceBonusDice?: number;
+  endingDetails?: { ending_key: string; is_true_ending: boolean };
 }
 
 const BookSpread: React.FC<BookSpreadProps> = ({
   section, gameState, combatState, onChoice, onCombatAction, onChangeCombatStance, onDeath, onEnding,
+  onNewRun, onReturnHome, onEmbraceDarkness, focusSpent, onSpendFocus, embraceBonusDice = 0, endingDetails,
 }) => {
   const isDead = section.is_death || gameState.resources.health <= 0;
   const isEnding = section.is_ending;
@@ -52,18 +60,56 @@ const BookSpread: React.FC<BookSpreadProps> = ({
         </div>
 
         {/* Death */}
-        {isDead && section.death_epitaph && (
-          <div className="border border-destructive/30 bg-destructive/5 rounded p-4 text-center mt-6">
+        {isDead && (
+          <div className="border border-destructive/30 bg-destructive/5 rounded p-6 text-center mt-6">
             <Skull className="mx-auto mb-2 text-destructive" size={24} />
             <p className="font-display text-destructive text-sm tracking-wider uppercase mb-2">You Are Dead</p>
-            <p className="font-narrative text-muted-foreground italic">{section.death_epitaph}</p>
+            {section.death_epitaph && (
+              <p className="font-narrative text-muted-foreground italic mb-4">{section.death_epitaph}</p>
+            )}
+            {section.death_cause && (
+              <p className="text-xs text-muted-foreground mb-4">Cause: {section.death_cause.replace(/_/g, ' ')}</p>
+            )}
+            <div className="flex gap-3 justify-center mt-4">
+              {onNewRun && (
+                <button onClick={onNewRun} className="flex items-center gap-2 px-4 py-2 rounded border border-gold bg-gold/10 text-gold font-display text-sm hover:bg-gold/20 transition-colors">
+                  <BookOpen size={14} /> New Run
+                </button>
+              )}
+              {onReturnHome && (
+                <button onClick={onReturnHome} className="flex items-center gap-2 px-4 py-2 rounded border border-border text-foreground font-display text-sm hover:bg-muted/30 transition-colors">
+                  <Home size={14} /> Return Home
+                </button>
+              )}
+            </div>
           </div>
         )}
 
         {/* Ending */}
         {isEnding && (
-          <div className="border border-gold/30 bg-gold/5 rounded p-4 text-center mt-6">
-            <p className="font-display text-gold text-sm tracking-wider uppercase">The End</p>
+          <div className="border border-gold/30 bg-gold/5 rounded p-6 text-center mt-6">
+            <Flame className="mx-auto mb-2 text-gold" size={24} />
+            <p className="font-display text-gold text-sm tracking-wider uppercase mb-2">
+              {endingDetails?.is_true_ending ? 'TRUE ENDING' : 'The End'}
+            </p>
+            {endingDetails && (
+              <p className="text-xs text-muted-foreground mb-2">
+                Ending: {endingDetails.ending_key.replace(/_/g, ' ')}
+                {endingDetails.is_true_ending && ' ★'}
+              </p>
+            )}
+            <div className="flex gap-3 justify-center mt-4">
+              {onNewRun && (
+                <button onClick={onNewRun} className="flex items-center gap-2 px-4 py-2 rounded border border-gold bg-gold/10 text-gold font-display text-sm hover:bg-gold/20 transition-colors">
+                  <BookOpen size={14} /> New Run
+                </button>
+              )}
+              {onReturnHome && (
+                <button onClick={onReturnHome} className="flex items-center gap-2 px-4 py-2 rounded border border-border text-foreground font-display text-sm hover:bg-muted/30 transition-colors">
+                  <Home size={14} /> Return Home
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -77,6 +123,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               <span>Enemy HP: {combatState.enemy_health}/{combatState.enemy.health}</span>
               <span>Round: {combatState.round}</span>
               <span>Stance: {combatState.player_stance}</span>
+              <span>Range: {combatState.player_range}</span>
             </div>
 
             {/* Stance buttons */}
@@ -97,7 +144,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
             </div>
 
             {/* Action buttons */}
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button onClick={() => onCombatAction('attack')} className="flex items-center gap-2 px-3 py-2 rounded border border-destructive/50 text-destructive hover:bg-destructive/10 text-sm font-display">
                 <Sword size={14} /> Attack
               </button>
@@ -106,6 +153,12 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               </button>
               <button onClick={() => onCombatAction('trick')} className="flex items-center gap-2 px-3 py-2 rounded border border-accent/50 text-accent hover:bg-accent/10 text-sm font-display">
                 <Zap size={14} /> Trick
+              </button>
+              <button onClick={() => onCombatAction('advance')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
+                <ArrowUp size={14} /> Advance
+              </button>
+              <button onClick={() => onCombatAction('withdraw')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
+                <ArrowDown size={14} /> Withdraw
               </button>
               <button onClick={() => onCombatAction('flee')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
                 <ArrowRight size={14} /> Flee
@@ -121,9 +174,35 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           </div>
         )}
 
+        {/* Pre-roll tools: Embrace Darkness & Focus */}
+        {!combatState && !isDead && !isEnding && section.choices.some(c => c.type === 'test') && (
+          <div className="mt-6 border border-border/50 rounded p-3 bg-muted/10">
+            <p className="text-xs text-muted-foreground font-display tracking-wider uppercase mb-2">Before you roll...</p>
+            <div className="flex flex-wrap gap-2">
+              {gameState.resources.focus > 0 && !focusSpent && onSpendFocus && (
+                <button onClick={onSpendFocus} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
+                  <Brain size={12} className="text-hex" /> Spend Focus (-1 TN)
+                </button>
+              )}
+              {focusSpent && <span className="text-xs text-gold font-display">Focus spent: TN -1 ✓</span>}
+              {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display">Darkness embraced: +{embraceBonusDice} dice ✓</span>}
+              {embraceBonusDice === 0 && onEmbraceDarkness && (
+                <>
+                  <button onClick={() => onEmbraceDarkness('madness')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
+                    <Skull size={12} className="text-madness" /> Embrace Madness (+2 dice, +1 Mad)
+                  </button>
+                  <button onClick={() => onEmbraceDarkness('taint')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
+                    <Skull size={12} className="text-taint" /> Embrace Taint (+2 dice, +1 Taint)
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Choices */}
         {!combatState && !isDead && !isEnding && section.choices.length > 0 && (
-          <div className="mt-8 space-y-3">
+          <div className="mt-6 space-y-3">
             <h3 className="font-display text-xs tracking-widest text-gold-dim uppercase">What do you do?</h3>
             {section.choices.map((choice, i) => {
               const gated = choice.type === 'gated' && !canMakeGatedChoice(gameState, choice);

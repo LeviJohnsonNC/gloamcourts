@@ -1,4 +1,4 @@
-import { DiceResult, RollOutcome, Stance, StatName, Stats, StatusEffect } from './types';
+import { DiceResult, RollOutcome, Stance, StatName, Stats, StatusEffect, RollContext, getTraitBonus, RangeBand } from './types';
 
 // Seeded PRNG (mulberry32)
 export function createRng(seed: number): () => number {
@@ -83,7 +83,12 @@ export function getPoolSize(
   stance: Stance,
   isAttack: boolean,
   statusEffects: StatusEffect[],
-  contextBonuses: number = 0
+  contextBonuses: number = 0,
+  traitKey?: string,
+  rollContext?: RollContext,
+  rangeBand?: RangeBand,
+  hasRangedItem?: boolean,
+  enemyEngagedBonus?: number,
 ): number {
   let pool = stats[stat];
 
@@ -96,14 +101,26 @@ export function getPoolSize(
     if (stance === 'Aggressive') pool -= 1;
   }
 
-  if (stance === 'Cunning') {
-    // Cunning: bonus to trick/social in combat
-    // handled contextually
-  }
-
   // Status effects
   if (statusEffects.some(e => e.key === 'paranoia') && (stat === 'GUILE')) {
     pool -= 1;
+  }
+  if (statusEffects.some(e => e.key === 'touched') && rollContext === 'social') {
+    pool -= 1;
+  }
+
+  // Trait bonus
+  if (traitKey && rollContext) {
+    pool += getTraitBonus(traitKey, stat, rollContext);
+  }
+
+  // Range band effects
+  if (rangeBand === 'Far' && stat === 'STEEL' && isAttack && !hasRangedItem) {
+    pool -= 1;
+  }
+  if (rangeBand === 'Engaged' && enemyEngagedBonus) {
+    // Enemy gets bonus at engaged; player takes penalty
+    pool -= enemyEngagedBonus;
   }
 
   pool += contextBonuses;
@@ -120,4 +137,24 @@ export function getTargetNumber(
   if (statusEffects.some(e => e.key === 'marked')) tn += 1;
   if (focusSpent) tn -= 1;
   return Math.max(2, Math.min(10, tn));
+}
+
+export function rerollDice(originalDice: number[], indicesToReroll: number[], rng?: () => number): number[] {
+  const newDice = [...originalDice];
+  const roll = rng || Math.random;
+  for (const idx of indicesToReroll) {
+    if (idx >= 0 && idx < newDice.length) {
+      newDice[idx] = Math.floor(roll() * 10) + 1;
+    }
+  }
+  return newDice;
+}
+
+export function convertLowestDie(dice: number[]): number[] {
+  const newDice = [...dice];
+  const lowestIdx = newDice.reduce((minIdx, d, i) => d < newDice[minIdx] ? i : minIdx, 0);
+  if (newDice[lowestIdx] === 1) {
+    newDice[lowestIdx] = 10;
+  }
+  return newDice;
 }

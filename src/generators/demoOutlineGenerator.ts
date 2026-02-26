@@ -87,19 +87,19 @@ function generateNarrative(rng: () => number, sectionIndex: number, title: strin
   return narratives[sectionIndex % narratives.length];
 }
 
+// 5 codex keys required for true ending
+const REQUIRED_CODEX_KEYS = ['the_pallid_ministry', 'the_echo_vault', 'the_grey_protocol', 'the_cinder_crown', 'the_pallid_seal'];
+
 export function generateOutline(seed: string): AdventureOutline {
   const hash = hashSeed(seed);
   const rng = createRng(hash);
 
-  // Shuffle section numbers
   const sections: Section[] = [];
   const sectionNumbers = [...SECTION_POOL];
-
-  // Use 25 sections
   const numSections = 25;
   const usedNumbers = sectionNumbers.slice(0, numSections);
 
-  // Shuffle for non-linearity but keep start and end
+  // Shuffle for non-linearity
   for (let i = usedNumbers.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [usedNumbers[i], usedNumbers[j]] = [usedNumbers[j], usedNumbers[i]];
@@ -108,8 +108,11 @@ export function generateOutline(seed: string): AdventureOutline {
   const startSection = usedNumbers[0];
   const bossSection = usedNumbers[numSections - 2];
   const endingSection = usedNumbers[numSections - 1];
+  // True ending section uses a number outside the pool
+  const trueEndingSection = 200;
+  // Alternate ending (no paperwork) section
+  const altEndingSection = 201;
 
-  // Death sections
   const deathSections = [usedNumbers[5], usedNumbers[10], usedNumbers[15], usedNumbers[20], usedNumbers[22]];
 
   const deathEpitaphs = [
@@ -159,6 +162,7 @@ export function generateOutline(seed: string): AdventureOutline {
         stance: 'Aggressive',
         is_boss: true,
         description: 'He burns. He laughs. He has been burning and laughing for three centuries, and he is very, very good at both.',
+        engaged_bonus: 1,
       };
       sections.push({
         section_number: sn,
@@ -170,22 +174,26 @@ export function generateOutline(seed: string): AdventureOutline {
           { label: 'Fight Lord Ashwick', type: 'combat', success_section: endingSection, fail_section: deathSections[4] },
         ],
         combat_enemy: bossEnemy,
+        codex_unlock: 'lord_ashwick',
       });
       continue;
     }
 
     if (isEnding) {
+      // Standard ending — but offer true ending door if eligible
       sections.push({
         section_number: sn,
         title: 'The End of the Beginning',
-        narrator_text: `YOU have survived the Gloam Courts. This is, by any reasonable measure, an achievement worthy of celebration. Or at least a stiff drink and a lie-down.\n\nThe gates open before you—or perhaps behind you, direction having long since lost its meaning—and the world outside rushes in like water into a ship that has only just realised it's sinking.\n\nYou are alive. You are mostly intact. You have stories that no one will believe and memories you wish you could return.\n\nThe Courts will be here when you come back. They are always here. They are always waiting.\n\nThey enjoyed having you.`,
+        narrator_text: `YOU have survived the Gloam Courts. This is, by any reasonable measure, an achievement worthy of celebration. Or at least a stiff drink and a lie-down.\n\nThe gates open before you—or perhaps behind you, direction having long since lost its meaning—and the world outside rushes in like water into a ship that has only just realised it's sinking.\n\nYou are alive. You are mostly intact. You have stories that no one will believe and memories you wish you could return.\n\nA side door catches your eye — marked with five seals, one for each great secret of the Courts. Beyond it, you sense, lies the true ending.`,
         has_plate: true,
         plate_caption: 'The gates of the Gloam Courts stand open, and you stand standing. A rare accomplishment.',
-        choices: [],
-        is_ending: true,
-        ending_key: 'survived',
-        is_true_ending: false,
-        codex_unlock: 'the_gloam_courts',
+        choices: [
+          { label: 'Leave the Courts (Standard Ending)', type: 'free', next_section: trueEndingSection - 1 },
+          { label: 'Pass through the Sealed Door (Requires all 5 Court Secrets)', type: 'free', next_section: trueEndingSection,
+            required_codex_key: 'true_ending_check' },
+        ],
+        requires_codex_keys: REQUIRED_CODEX_KEYS,
+        alternate_section: altEndingSection,
       });
       continue;
     }
@@ -195,52 +203,46 @@ export function generateOutline(seed: string): AdventureOutline {
     const getNext = () => nextSections[Math.floor(rng() * Math.min(3, nextSections.length))] || endingSection;
 
     if (i === 0) {
-      // Start section
       choices.push(
         { label: 'Enter through the main gates', type: 'free', next_section: usedNumbers[1] },
-        { label: 'Look for a servant\'s entrance', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 6, stakes: 'Finding an alternate entry might reveal secrets—or simply reveal you to things that hunt in back corridors.', success_section: usedNumbers[2], fail_section: usedNumbers[1] },
-        { label: 'Scale the wall', type: 'test', stat_used: 'GRACE', base_pool: 3, tn: 7, stakes: 'The wall is high and the gargoyles are watching.', success_section: usedNumbers[3], fail_section: deathSections[0], item_gain: dagger },
+        { label: 'Look for a servant\'s entrance', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 6, roll_context: 'investigation', stakes: 'Finding an alternate entry might reveal secrets—or simply reveal you to things that hunt in back corridors.', success_section: usedNumbers[2], fail_section: usedNumbers[1] },
+        { label: 'Scale the wall', type: 'test', stat_used: 'GRACE', base_pool: 3, tn: 7, roll_context: 'stealth', stakes: 'The wall is high and the gargoyles are watching.', success_section: usedNumbers[3], fail_section: deathSections[0], item_gain: dagger },
       );
     } else if (i < 4) {
-      // Early exploration
       choices.push(
         { label: 'Proceed deeper into the Courts', type: 'free', next_section: getNext(), codex_unlock: i === 1 ? 'house_vael' : undefined },
-        { label: 'Investigate the strange sound', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 6, stakes: 'Knowledge is power. Ignorance is bliss. You can\'t have both.', success_section: getNext(), fail_section: getNext(), resource_change: { focus: -1 } },
+        { label: 'Investigate the strange sound', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 6, roll_context: 'investigation', stakes: 'Knowledge is power. Ignorance is bliss. You can\'t have both.', success_section: getNext(), fail_section: getNext(), resource_change: { focus: -1 } },
       );
       if (i === 2) {
-        choices.push({
-          label: 'Pick up the rusty dagger', type: 'free', next_section: getNext(), item_gain: dagger,
-        });
+        choices.push({ label: 'Pick up the rusty dagger', type: 'free', next_section: getNext(), item_gain: dagger });
       }
     } else if (i < 8) {
-      // Mid sections
       const hasSocialOption = rng() > 0.4;
-      choices.push(
-        { label: 'Press forward', type: 'free', next_section: getNext() },
-      );
+      choices.push({ label: 'Press forward', type: 'free', next_section: getNext() });
       if (hasSocialOption) {
         choices.push({
-          label: 'Attempt to bluff your way past', type: 'test', stat_used: 'GUILE', base_pool: 3, tn: 6, stakes: 'Your silver tongue versus their iron suspicion.',
+          label: 'Attempt to bluff your way past', type: 'test', stat_used: 'GUILE', base_pool: 3, tn: 6, roll_context: 'social',
+          stakes: 'Your silver tongue versus their iron suspicion.',
           success_section: getNext(), fail_section: deathSections[Math.floor(rng() * 3)],
           codex_unlock: rng() > 0.7 ? 'the_pallid_ministry' : undefined,
           rumor_unlock: rng() > 0.7 ? 'vael_debt' : undefined,
         });
       }
       choices.push({
-        label: 'Search for hidden passages', type: 'test', stat_used: 'WITS', base_pool: 4, tn: 7,
+        label: 'Search for hidden passages', type: 'test', stat_used: 'WITS', base_pool: 4, tn: 7, roll_context: 'investigation',
         stakes: 'The walls have ears. The floors have opinions.',
         success_section: getNext(), fail_section: getNext(),
         item_gain: i === 6 ? key : undefined,
         codex_unlock: rng() > 0.6 ? 'the_undercroft' : undefined,
       });
     } else if (i < 12) {
-      // Late mid
       const hasCombat = rng() > 0.5;
       choices.push({ label: 'Continue cautiously', type: 'free', next_section: getNext() });
       if (hasCombat) {
         const minorEnemy: CombatEnemy = {
           name: 'Iron Saint', pool: 3, tn: 7, health: 4, stance: 'Guarded', is_boss: false,
           description: 'An animated suit of armour that enforces laws from a bygone era. Its sword is very much from the current era.',
+          engaged_bonus: 0,
         };
         choices.push({
           label: 'Face the Iron Saint', type: 'combat',
@@ -248,7 +250,6 @@ export function generateOutline(seed: string): AdventureOutline {
           codex_unlock: 'iron_saints',
           rumor_unlock: 'iron_saint_paradox',
         });
-        // Attach enemy to section
         sections.push({
           section_number: sn, title, narrator_text: narratorText, has_plate: hasPlate,
           plate_caption: hasPlate ? 'The Iron Saint stands motionless, waiting for a law to be broken.' : undefined,
@@ -262,11 +263,10 @@ export function generateOutline(seed: string): AdventureOutline {
         codex_unlock: 'the_echo_vault',
       });
     } else if (i < numSections - 3) {
-      // Late game, converging toward boss
       choices.push(
         { label: 'Descend toward the heart of the Courts', type: 'free', next_section: usedNumbers[Math.min(i + 1, numSections - 3)] },
         {
-          label: 'Embrace the darkness for power', type: 'test', stat_used: 'HEX', base_pool: 4, tn: 7,
+          label: 'Embrace the darkness for power', type: 'test', stat_used: 'HEX', base_pool: 4, tn: 7, roll_context: 'hex',
           stakes: 'The darkness offers power. The price is... well, the price is always the same.',
           success_section: bossSection, fail_section: deathSections[3],
           track_change: { taint: 2 },
@@ -275,10 +275,9 @@ export function generateOutline(seed: string): AdventureOutline {
         },
       );
     } else {
-      // Pre-boss
       choices.push(
         { label: 'Enter the ballroom', type: 'free', next_section: bossSection },
-        { label: 'Prepare yourself first', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 5,
+        { label: 'Prepare yourself first', type: 'test', stat_used: 'WITS', base_pool: 3, tn: 5, roll_context: 'investigation',
           stakes: 'A moment of clarity before the storm.',
           success_section: bossSection, fail_section: bossSection,
           resource_change: { focus: 1, health: 2 },
@@ -296,6 +295,45 @@ export function generateOutline(seed: string): AdventureOutline {
     });
   }
 
+  // Add standard ending section (non-true)
+  sections.push({
+    section_number: trueEndingSection - 1,
+    title: 'Departure',
+    narrator_text: `YOU step through the gates and into the world outside. The air is cold and clean and tastes of nothing more interesting than rain. Behind you, the Gloam Courts settle back into their perpetual twilight, already forgetting you.\n\nOr pretending to. The Courts never truly forget. They simply file you away for later.`,
+    has_plate: false,
+    choices: [],
+    is_ending: true,
+    ending_key: 'survived',
+    is_true_ending: false,
+    codex_unlock: 'the_gloam_courts',
+  });
+
+  // Add true ending section
+  sections.push({
+    section_number: trueEndingSection,
+    title: 'The Crown\'s Secret',
+    narrator_text: `YOU press your hand against the Sealed Door. The five seals — Ministry, Vault, Protocol, Crown, and Office — glow in sequence, each one acknowledging your right to pass.\n\nThe door opens onto a room that exists outside the Courts' usual relationship with reality. Here, the Cinder Crown sits not on its cushion but floating, attended by whispers that resolve into words as you approach.\n\n"So," says the Crown. "You bothered to learn. How terribly inconvenient."\n\nThe truth of the Gloam Courts unfolds before you like a map of somewhere you've always been but never understood. The Courts are not a building. They are not even a place. They are a question, asked so long ago that the answer has been forgotten.\n\nYou are the answer.\n\nThe Crown descends. You wear it. You burn.\n\nBut unlike Ashwick, you burn with understanding. And that makes all the difference.`,
+    has_plate: true,
+    plate_caption: 'The Cinder Crown finds a worthy brow at last.',
+    choices: [],
+    is_ending: true,
+    ending_key: 'true_ending_crown',
+    is_true_ending: true,
+    codex_unlock: 'the_cinder_crown',
+  });
+
+  // Add alternate ending (missing paperwork)
+  sections.push({
+    section_number: altEndingSection,
+    title: 'Insufficient Documentation',
+    narrator_text: `YOU press your hand against the Sealed Door with the confidence of someone who has done at least some of their homework.\n\nThe seals examine your credentials. One glows. Two flicker uncertainly. The remaining ones dim with the bureaucratic disapproval that only magical security systems can truly achieve.\n\n"INSUFFICIENT CODEX CLEARANCE," announces a voice that sounds like a rubber stamp made sentient and given authority issues. "Please collect all five Court Secrets and try again. The Pallid Ministry thanks you for your patience and reminds you that patience is, in fact, mandatory."\n\nThe door remains firmly shut. Somewhere behind it, you could swear you hear the Crown laughing.\n\nYou leave through the regular exit, wondering what secrets you missed.`,
+    has_plate: false,
+    choices: [],
+    is_ending: true,
+    ending_key: 'insufficient_clearance',
+    is_true_ending: false,
+  });
+
   const titleOptions = [
     'The Invitation of House Vael',
     'A Night at the Gloam Courts',
@@ -309,5 +347,6 @@ export function generateOutline(seed: string): AdventureOutline {
     seed,
     sections,
     start_section: startSection,
+    required_codex_keys: REQUIRED_CODEX_KEYS,
   };
 }

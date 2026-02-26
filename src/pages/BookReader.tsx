@@ -6,10 +6,11 @@ import BookSpread from '@/components/BookSpread';
 import DiceTray from '@/components/DiceTray';
 import BookmarkPanel from '@/components/BookmarkPanel';
 import CharacterCreation from '@/components/CharacterCreation';
-import { Stats } from '@/rules/types';
+import { Stats, TRAITS } from '@/rules/types';
+import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
-import { Book, Scroll, Home } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Book, Scroll, Home, Copy, Check } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
 
 const BookReader: React.FC = () => {
   const { runId } = useParams<{ runId: string }>();
@@ -18,28 +19,34 @@ const BookReader: React.FC = () => {
   const {
     gameState, outline, currentSection, combatState,
     lastRoll, showDiceTray, setShowDiceTray,
+    focusSpentThisRoll, embraceBonusDice,
     createNewRun, loadRun, makeChoice, doCombatAction,
     changeCombatStance, recordDeath, completeRun,
+    spendLuckReroll, spendFocusReduceTn, doEmbraceDarkness,
+    useDeathsJest, goToSection,
   } = useGameState();
 
   const [showCharCreate, setShowCharCreate] = useState(false);
   const [showCodex, setShowCodex] = useState(false);
   const [showRumors, setShowRumors] = useState(false);
   const [seed, setSeed] = useState('');
+  const [isSharedReplay, setIsSharedReplay] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sectionInput, setSectionInput] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!user) { navigate('/auth'); return; }
     if (runId === 'new') {
       setShowCharCreate(true);
       setSeed(Date.now().toString(36));
+      setIsSharedReplay(false);
       setLoading(false);
     } else if (runId === 'new-seed') {
-      // Handled by landing page passing seed in state
       setShowCharCreate(true);
       const params = new URLSearchParams(window.location.search);
       setSeed(params.get('seed') || Date.now().toString(36));
+      setIsSharedReplay(true);
       setLoading(false);
     } else if (runId) {
       loadRun(runId).then(() => setLoading(false));
@@ -48,7 +55,7 @@ const BookReader: React.FC = () => {
 
   const handleCharCreate = async (stats: Stats, traitKey: string, description: string) => {
     if (!user) return;
-    const newRunId = await createNewRun(user.id, seed, stats, traitKey, description);
+    const newRunId = await createNewRun(user.id, seed, stats, traitKey, description, isSharedReplay);
     setShowCharCreate(false);
     navigate(`/book/${newRunId}`, { replace: true });
   };
@@ -72,15 +79,24 @@ const BookReader: React.FC = () => {
 
   const handleGoToSection = () => {
     const num = parseInt(sectionInput);
-    if (!gameState || !outline || isNaN(num)) return;
-    if (!gameState.visited_sections.includes(num)) return;
-    const section = outline.sections.find(s => s.section_number === num);
-    if (section) {
-      playPageFlip();
-      // We just navigate display, not state
-    }
+    if (isNaN(num)) return;
+    playPageFlip();
+    goToSection(num);
     setSectionInput('');
   };
+
+  const handleCopySeed = () => {
+    if (outline?.seed) {
+      navigator.clipboard.writeText(outline.seed);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      toast({ title: 'Copied!', description: 'Run code copied to clipboard.' });
+    }
+  };
+
+  const canUseTrait = gameState?.trait_key === 'deaths_jest' && !hasUsedTraitAbility(gameState, 'deaths_jest')
+    ? { key: 'deaths_jest', name: "Death's Jest" }
+    : null;
 
   if (loading) {
     return (
@@ -106,6 +122,10 @@ const BookReader: React.FC = () => {
     );
   }
 
+  const endingDetails = currentSection.is_ending && currentSection.ending_key
+    ? { ending_key: currentSection.ending_key, is_true_ending: currentSection.is_true_ending || false }
+    : undefined;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -115,6 +135,17 @@ const BookReader: React.FC = () => {
           <h1 className="font-display text-sm text-gold tracking-wider">{outline?.title}</h1>
         </div>
         <div className="flex items-center gap-2">
+          {/* Run Code */}
+          {outline?.seed && (
+            <button
+              onClick={handleCopySeed}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-gold transition-colors font-display"
+              title={`Run Code: ${outline.seed}`}
+            >
+              {copied ? <Check size={12} className="text-gold" /> : <Copy size={12} />}
+              <span className="hidden sm:inline">{outline.seed}</span>
+            </button>
+          )}
           <div className="flex items-center gap-1">
             <input
               value={sectionInput}
@@ -144,11 +175,29 @@ const BookReader: React.FC = () => {
           onChangeCombatStance={changeCombatStance}
           onDeath={handleDeath}
           onEnding={handleEnding}
+          onNewRun={() => navigate('/book/new')}
+          onReturnHome={() => navigate('/')}
+          onEmbraceDarkness={doEmbraceDarkness}
+          focusSpent={focusSpentThisRoll}
+          onSpendFocus={spendFocusReduceTn}
+          embraceBonusDice={embraceBonusDice}
+          endingDetails={endingDetails}
         />
       </main>
 
       {/* Dice Tray */}
-      <DiceTray rollOutcome={lastRoll} visible={showDiceTray} onClose={() => setShowDiceTray(false)} />
+      <DiceTray
+        rollOutcome={lastRoll}
+        visible={showDiceTray}
+        onClose={() => setShowDiceTray(false)}
+        luck={gameState.resources.luck}
+        focus={gameState.resources.focus}
+        focusSpent={focusSpentThisRoll}
+        canUseTrait={canUseTrait}
+        onSpendLuck={spendLuckReroll}
+        onSpendFocus={spendFocusReduceTn}
+        onUseDeathsJest={useDeathsJest}
+      />
 
       {/* Bookmark panels */}
       <BookmarkPanel type="codex" visible={showCodex} onClose={() => setShowCodex(false)} />

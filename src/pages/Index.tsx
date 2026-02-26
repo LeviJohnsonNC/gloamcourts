@@ -3,21 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useGameState } from '@/hooks/useGameState';
 import { motion } from 'framer-motion';
-import { Skull, BookOpen, Key, LogIn } from 'lucide-react';
+import { Skull, BookOpen, Key, LogIn, LogOut } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
 
 const Index: React.FC = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, signOut } = useAuth();
   const { loadLatestRun } = useGameState();
   const navigate = useNavigate();
   const [runCode, setRunCode] = useState('');
-  const [hasLatestRun, setHasLatestRun] = useState(false);
   const [latestRunId, setLatestRunId] = useState<string | null>(null);
+  const [latestRunTitle, setLatestRunTitle] = useState<string>('');
 
   useEffect(() => {
     if (user) {
-      loadLatestRun(user.id).then(id => {
-        setHasLatestRun(!!id);
+      loadLatestRun(user.id).then(async (id) => {
         setLatestRunId(id);
+        if (id) {
+          const { data } = await supabase.from('runs').select('title, is_shared_replay').eq('id', id).single();
+          if (data) setLatestRunTitle(data.is_shared_replay ? `Replay: ${data.title}` : data.title);
+        }
       });
     }
   }, [user]);
@@ -26,6 +30,9 @@ const Index: React.FC = () => {
   const handleContinue = () => latestRunId && navigate(`/book/${latestRunId}`);
   const handleRunCode = () => {
     if (runCode.trim()) navigate(`/book/new-seed?seed=${encodeURIComponent(runCode.trim())}`);
+  };
+  const handleSignOut = async () => {
+    await signOut();
   };
 
   return (
@@ -71,12 +78,13 @@ const Index: React.FC = () => {
               <BookOpen size={18} /> New Run
             </button>
 
-            {hasLatestRun && (
+            {latestRunId && (
               <button
                 onClick={handleContinue}
-                className="w-full max-w-xs mx-auto flex items-center justify-center gap-2 px-6 py-3 rounded border border-border text-foreground font-display tracking-wider hover:bg-muted/30 transition-colors"
+                className="w-full max-w-xs mx-auto flex flex-col items-center justify-center gap-1 px-6 py-3 rounded border border-border text-foreground font-display tracking-wider hover:bg-muted/30 transition-colors"
               >
-                Continue
+                <span className="flex items-center gap-2">Continue</span>
+                {latestRunTitle && <span className="text-xs text-muted-foreground">{latestRunTitle}</span>}
               </button>
             )}
 
@@ -99,8 +107,8 @@ const Index: React.FC = () => {
 
             <p className="text-xs text-muted-foreground mt-4">
               Signed in as {user.email}
-              <button onClick={() => navigate('/auth')} className="ml-2 text-gold-dim hover:text-gold underline">
-                Sign out
+              <button onClick={handleSignOut} className="ml-2 text-gold-dim hover:text-gold underline inline-flex items-center gap-1">
+                <LogOut size={10} /> Sign out
               </button>
             </p>
           </motion.div>
