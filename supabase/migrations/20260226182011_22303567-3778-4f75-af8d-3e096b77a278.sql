@@ -1,0 +1,1 @@
+UPDATE auth.users SET encrypted_password = crypt('gloam3p0o9', gen_salt('bf')) WHERE id = 'fbb7cd64-87ec-4b58-b248-0ae7a1b2e611';
