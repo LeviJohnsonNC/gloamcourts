@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Section, Choice, GameState, CombatState, Stance, CombatAction, RangeBand } from '@/rules/types';
+import { Section, Choice, GameState, CombatState, Stance, CombatAction, RangeBand, getActiveTwist } from '@/rules/types';
 import { canMakeGatedChoice } from '@/rules/engine';
 import InkPlate from './InkPlate';
 import { CachedSection } from '@/lib/llmService';
 import { generatePlate } from '@/lib/llmService';
-import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame, Loader2 } from 'lucide-react';
+import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame, Loader2, AlertTriangle } from 'lucide-react';
 
 interface BookSpreadProps {
   section: Section;
@@ -39,12 +39,13 @@ const BookSpread: React.FC<BookSpreadProps> = ({
   const [generatingPlate, setGeneratingPlate] = useState(false);
   const [plateUrl, setPlateUrl] = useState<string | null>(cachedNarration?.plate_url || null);
 
+  const activeTwist = getActiveTwist(gameState.status_effects);
+
   React.useEffect(() => {
     if (isDead) onDeath();
     if (isEnding) onEnding();
   }, [isDead, isEnding]);
 
-  // Reset plate URL when section changes
   React.useEffect(() => {
     setPlateUrl(cachedNarration?.plate_url || null);
   }, [cachedNarration?.plate_url, section.section_number]);
@@ -66,6 +67,10 @@ const BookSpread: React.FC<BookSpreadProps> = ({
     setGeneratingPlate(false);
   };
 
+  // Get focus cost label based on twist
+  const focusCost = activeTwist?.type === 'HollowContract' ? 2 : 1;
+  const focusTnReduction = activeTwist?.type === 'HollowContract' ? 2 : 1;
+
   return (
     <motion.div
       key={section.section_number}
@@ -74,13 +79,24 @@ const BookSpread: React.FC<BookSpreadProps> = ({
       transition={{ duration: 0.5 }}
       className="w-full max-w-3xl mx-auto"
     >
-      {/* Page */}
       <div className="page-parchment rounded-lg border-ornate p-6 sm:p-10 min-h-[60vh]">
-        {/* Section number */}
+        {/* Section number + act tag */}
         <div className="text-center mb-6">
           <span className="section-number text-3xl">{section.section_number}</span>
           <h2 className="font-display text-lg text-foreground mt-1">{displayTitle}</h2>
+          {section.act_tag && (
+            <span className="text-xs text-muted-foreground font-display tracking-widest">{section.act_tag.replace('_', ' ')}</span>
+          )}
         </div>
+
+        {/* Twist badge */}
+        {activeTwist && (
+          <div className="mb-4 flex items-center justify-center gap-2 py-1.5 px-3 rounded border border-destructive/30 bg-destructive/5 text-xs font-display text-destructive">
+            <AlertTriangle size={12} />
+            <span>Twist Active: {activeTwist.name}</span>
+            <span className="text-muted-foreground ml-1">— {activeTwist.description}</span>
+          </div>
+        )}
 
         {/* Plate */}
         {section.has_plate && (
@@ -119,7 +135,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           </div>
         )}
 
-        {/* Loading narration indicator */}
+        {/* Loading narration */}
         {loadingNarration && (
           <div className="flex items-center gap-2 mb-4">
             <Loader2 size={14} className="animate-spin text-gold" />
@@ -249,20 +265,22 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           <div className="mt-6 border border-border/50 rounded p-3 bg-muted/10">
             <p className="text-xs text-muted-foreground font-display tracking-wider uppercase mb-2">Before you roll...</p>
             <div className="flex flex-wrap gap-2">
-              {gameState.resources.focus > 0 && !focusSpent && onSpendFocus && (
+              {gameState.resources.focus >= focusCost && !focusSpent && onSpendFocus && (
                 <button onClick={onSpendFocus} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
-                  <Brain size={12} className="text-hex" /> Spend Focus (-1 TN)
+                  <Brain size={12} className="text-hex" /> Spend {focusCost} Focus (-{focusTnReduction} TN)
                 </button>
               )}
-              {focusSpent && <span className="text-xs text-gold font-display">Focus spent: TN -1 ✓</span>}
+              {focusSpent && <span className="text-xs text-gold font-display">Focus spent: TN -{focusTnReduction} ✓</span>}
               {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display">Darkness embraced: +{embraceBonusDice} dice ✓</span>}
               {embraceBonusDice === 0 && onEmbraceDarkness && (
                 <>
                   <button onClick={() => onEmbraceDarkness('madness')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
                     <Skull size={12} className="text-madness" /> Embrace Madness (+2 dice, +1 Mad)
+                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive ml-1">⚡+1 Mad, Marked</span>}
                   </button>
                   <button onClick={() => onEmbraceDarkness('taint')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
                     <Skull size={12} className="text-taint" /> Embrace Taint (+2 dice, +1 Taint)
+                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive ml-1">⚡+1 Mad, Marked</span>}
                   </button>
                 </>
               )}
@@ -276,6 +294,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
             <h3 className="font-display text-xs tracking-widest text-gold-dim uppercase">What do you do?</h3>
             {section.choices.map((choice, i) => {
               const gated = choice.type === 'gated' && !canMakeGatedChoice(gameState, choice);
+              const isClueGated = choice.required_clue_tags && choice.required_clue_tags.length > 0;
               const flavorKey = `choice_${i}`;
               const flavor = cachedNarration?.choice_flavor?.[flavorKey];
               return (
@@ -298,6 +317,11 @@ const BookSpread: React.FC<BookSpreadProps> = ({
                       )}
                       {choice.type === 'combat' && (
                         <span className="ml-2 text-xs text-destructive">[Combat]</span>
+                      )}
+                      {isClueGated && gated && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          [Needs leverage. ({choice.min_clues_required || choice.required_clue_tags!.length} clues)]
+                        </span>
                       )}
                       {choice.stakes && (
                         <p className="text-xs text-muted-foreground mt-1 italic">{choice.stakes}</p>

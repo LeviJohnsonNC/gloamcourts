@@ -6,30 +6,102 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+const WORLD_BIBLE_PROMPT = `You are the World Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Output STRICT JSON only — no markdown, no commentary.
+
+Generate a World Bible for this adventure seed. The world is a lattice of decaying aristocratic domains in perpetual twilight.
+
+OUTPUT JSON:
+{
+  "courts": [
+    {"name": "string", "motto": "string", "signature": "brief visual/thematic signature", "taboo": "what they never do"},
+    // exactly 3 courts
+  ],
+  "factions": [
+    {"name": "string", "goal": "string", "method": "string", "tell": "visual or behavioral tell"},
+    // exactly 6 factions. MUST include: House Vael, The Pallid Ministry, Iron Saints, The Echo Vault keepers, The Grey Protocol, and one unique faction
+  ],
+  "recurring_npcs": [
+    {"name": "string", "role": "string", "voice_tick": "speech quirk or mannerism", "secret": "hidden motivation"},
+    // exactly 5 NPCs
+  ],
+  "signature_places": [
+    {"name": "string", "one_line": "atmospheric one-liner"},
+    // exactly 10 places. MUST include: Bone Market, Echo Vault, Undercroft, and 7 unique locations
+  ],
+  "linguistic_rules": {
+    "naming_style": "brief description of naming conventions (e.g., 'Victorian compound words with body-part metaphors')",
+    "forbidden_words": ["orc", "zombie", "cyber", "space", "cowboy", "dragon", "elf", "dwarf"]
+  }
+}
+
+TONE: Gothic dark comedy. Names should feel unique and sticky — not generic fantasy. Think Gormenghast meets Discworld meets Bloodborne.`;
+
 const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. You output STRICT JSON only — no markdown, no commentary.
-
-WORLD: The Gloam Courts are a lattice of decaying aristocratic domains in perpetual twilight. Factions: House Vael (decadent hosts), The Pallid Ministry (bureaucratic enforcers), Iron Saints (animated armor guardians), The Echo Vault (memory archive), The Grey Protocol (secret resistance). Lord Ashwick is the final boss — an eternally smouldering aristocrat.
-
-TONE: Old-school "Fighting Fantasy" narrator addressing YOU. Dark comedy — genuinely tense but absurdly funny. Proper nouns ground the world.
 
 RULES YOU MUST NOT BREAK:
 - You NEVER decide dice outcomes. You only define section structure, TNs, pools, and choices.
-- Item tags MUST be from: Sharp, Key, Ranged, Light, Holy, Poison, Coin, Seal
+- Item tags MUST be from: Sharp, Key, Ranged, Light, Holy, Poison, Coin, Seal, OR any "Clue:*" tag for clue items
 - Status effects MUST be from: Paranoia, Marked, Hollow-Eyed, Touched, Corrupted, Abomination
 - Stats: STEEL, GUILE, WITS, GRACE, HEX
 - TN range: 2-10, pools: 1-8, enemy health: 2-12
 - No new resources, no new mechanics.
 
-OUTPUT the outline as a single JSON object matching this schema exactly:
+STRUCTURE REQUIREMENTS:
+- 60-120 sections total (aim for 80-90)
+- Section numbers: unique integers from 1..400 (classic Fighting Fantasy vibe)
+- Every section MUST have 2-4 choices (except death/ending sections which have 0)
+- ALL next_section/success_section/fail_section MUST point to existing section_numbers (ZERO broken links)
+- Start section must be reachable and must reach at least 85% of all sections
+
+ACT STRUCTURE:
+- Act I (first ~25% of sections): Setup, establish the Court, initial problem, 1-2 factions introduced. act_tag="ACT_I"
+- Act II (next ~50% of sections): Pressure builds, clue network deepens, TWIST occurs, consequences stack. act_tag="ACT_II"
+- Act III (final ~25% of sections): Reckoning, final approaches to endings. act_tag="ACT_III"
+
+CONTENT MINIMUMS:
+- 8-15 combat sections
+- 10-20 WITS investigation tests
+- 8-15 GUILE social leverage tests
+- 6-12 HEX temptation moments
+- 6-12 gated choices (item tags OR clue gates)
+- 8-14 clue-granting sections (inventory_grants with is_clue=true and "Clue:*" tags)
+- 6-10 clue-gated choices
+
+CLUE SYSTEM:
+- Clues are inventory items with is_clue=true and tags starting with "Clue:" (e.g., "Clue:Ashwick", "Clue:Protocol")
+- Clue gates use: gate: { "required_clue_tags": ["Clue:X", "Clue:Y"], "min_required": 2 }
+- Clues reward investigation and clever play
+
+TWIST (exactly 1):
+- One section in Act II must have is_twist=true
+- twist_type must be one of: "DebtWrit", "GreyNotice", "HollowContract"
+- The twist section must be on a main path (reachable on most routes)
+- After twist, at least 10 sections should reference consequences in outline_summary
+
+ENDINGS:
+- 5-8 endings total, exactly 1 true ending (is_true_ending=true)
+- True ending gated by a "Sealed Door" checking 5 required codex keys
+- Death sections: is_death=true, no choices
+
+PLATES:
+- has_plate=true for all boss sections and ~15% of other sections
+
+WORLD BIBLE USAGE:
+- Every section MUST reference at least one world_bible element in location_tag or outline_summary
+- At least 40% of sections must reference a faction OR recurring NPC
+- Names must be consistent — reuse world_bible names, don't invent new ones
+
+OUTPUT the outline as a single JSON object:
 {
   "title": string,
-  "seed": string (echo back the seed given),
+  "seed": string,
   "start_section": number,
-  "required_codex_keys": string[] (exactly 5 keys from: the_pallid_ministry, the_echo_vault, the_grey_protocol, the_cinder_crown, the_pallid_seal),
+  "required_codex_keys": string[],
+  "world_bible": <the world bible object provided>,
   "sections": [
     {
-      "section_number": number (unique int 1..400),
-      "outline_summary": string (1 sentence),
+      "section_number": number,
+      "outline_summary": string,
       "location_tag": string,
       "has_plate": boolean,
       "is_boss": boolean,
@@ -39,7 +111,7 @@ OUTPUT the outline as a single JSON object matching this schema exactly:
       "is_true_ending": boolean,
       "codex_unlock": string|null,
       "rumor_unlock": string|null,
-      "inventory_grants": [{"name":string,"tags":string[]}],
+      "inventory_grants": [{"name":string,"tags":string[],"is_clue":boolean}],
       "choices": [
         {
           "choice_id": string,
@@ -56,7 +128,7 @@ OUTPUT the outline as a single JSON object matching this schema exactly:
             "on_success": {"effects":{}},
             "on_fail": {"effects":{}}
           }|null,
-          "gate": {"required_item_tag":string}|{"required_codex_key":string}|null,
+          "gate": {"required_item_tag":string}|{"required_codex_key":string}|{"required_clue_tags":string[],"min_required":number}|null,
           "combat_enemy": {
             "name": string,
             "pool": number,
@@ -66,22 +138,13 @@ OUTPUT the outline as a single JSON object matching this schema exactly:
             "is_boss": boolean
           }|null
         }
-      ]
+      ],
+      "act_tag": "ACT_I"|"ACT_II"|"ACT_III",
+      "is_twist": boolean,
+      "twist_type": string|null
     }
   ]
-}
-
-REQUIREMENTS:
-- 60-120 sections total
-- Section numbers: unique integers from 1..400
-- 2-4 choices per section (avg ~3)
-- At least: 8 combat sections, 10 investigation (WITS), 8 social (GUILE), 6 HEX temptation, 6 gated choices
-- 5-8 endings, exactly 1 true ending (is_true_ending=true)
-- True ending gated by a "Sealed Door" checking 5 required codex keys
-- has_plate=true for bosses and ~15% of sections
-- Include death sections with epitaphs implied in outline_summary
-- Link all next_section/success_section/fail_section to existing section_numbers
-- Start section must exist in sections array`;
+}`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -99,18 +162,18 @@ serve(async (req) => {
     );
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
-    const userId = claimsData.claims.sub;
+    const userId = user.id;
 
     const { seed } = await req.json();
     if (!seed) {
       return new Response(JSON.stringify({ error: "seed is required" }), { status: 400, headers: corsHeaders });
     }
 
-    // Rate limit: max 10 outlines per day per user
+    // Rate limit: max 10 outlines per day
     const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
     const { count } = await supabase
       .from("runs")
@@ -129,6 +192,58 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "AI not configured" }), { status: 500, headers: corsHeaders });
     }
 
+    // Fetch required codex keys
+    const { data: codexKeys } = await supabase
+      .from("codex_entries")
+      .select("codex_key")
+      .eq("is_true_ending_required", true);
+    const requiredKeys = (codexKeys || []).map((k: any) => k.codex_key).slice(0, 5);
+
+    // Stage 1: Generate World Bible
+    console.log("Generating world bible for seed:", seed);
+    const wbResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: WORLD_BIBLE_PROMPT },
+          { role: "user", content: `Generate a World Bible for adventure seed: "${seed}". Output ONLY the JSON object.` },
+        ],
+        temperature: 0.3,
+      }),
+    });
+
+    let worldBible = null;
+    if (wbResponse.ok) {
+      const wbData = await wbResponse.json();
+      let wbContent = wbData.choices?.[0]?.message?.content || "";
+      wbContent = wbContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      try {
+        worldBible = JSON.parse(wbContent);
+        console.log("World bible generated:", Object.keys(worldBible));
+      } catch {
+        console.error("Failed to parse world bible:", wbContent.substring(0, 200));
+      }
+    } else {
+      console.error("World bible generation failed:", wbResponse.status);
+    }
+
+    // Stage 2: Generate Outline with World Bible
+    const worldBibleContext = worldBible
+      ? `\n\nWORLD BIBLE (use these names, places, factions consistently):\n${JSON.stringify(worldBible, null, 1)}`
+      : "";
+
+    const outlinePrompt = `Generate an adventure outline for seed: "${seed}".
+Required codex keys for true ending: ${JSON.stringify(requiredKeys)}
+${worldBibleContext}
+
+Output ONLY the JSON object.`;
+
+    console.log("Generating outline for seed:", seed);
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -139,7 +254,7 @@ serve(async (req) => {
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: OUTLINE_SYSTEM_PROMPT },
-          { role: "user", content: `Generate an adventure outline for seed: "${seed}". Output ONLY the JSON object, nothing else.` },
+          { role: "user", content: outlinePrompt },
         ],
         temperature: 0.2,
       }),
@@ -153,6 +268,11 @@ serve(async (req) => {
           status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "payment_required", message: "AI credits exhausted." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: "ai_error", message: "The Author is unavailable." }), {
         status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -160,8 +280,6 @@ serve(async (req) => {
 
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || "";
-
-    // Strip markdown code fences if present
     content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
     let outline;
@@ -174,7 +292,18 @@ serve(async (req) => {
       });
     }
 
-    // Basic validation
+    // Inject world_bible into outline for caching
+    if (worldBible) {
+      outline.world_bible = worldBible;
+    }
+
+    // Ensure seed and required keys
+    outline.seed = seed;
+    if (requiredKeys.length > 0) {
+      outline.required_codex_keys = requiredKeys;
+    }
+
+    // Server-side validation (basic — client does full validation)
     const errors = validateOutline(outline);
     if (errors.length > 0) {
       console.error("Outline validation errors:", errors);
@@ -182,9 +311,6 @@ serve(async (req) => {
         status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    // Ensure seed matches
-    outline.seed = seed;
 
     return new Response(JSON.stringify({ outline }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -203,8 +329,8 @@ function validateOutline(o: any): string[] {
   if (!o.title) errors.push("Missing title");
   if (!o.start_section) errors.push("Missing start_section");
   if (!Array.isArray(o.sections)) { errors.push("sections is not an array"); return errors; }
-  if (o.sections.length < 20) errors.push(`Too few sections: ${o.sections.length}`);
-  if (o.sections.length > 200) errors.push(`Too many sections: ${o.sections.length}`);
+  if (o.sections.length < 60) errors.push(`Too few sections: ${o.sections.length} (need 60-120)`);
+  if (o.sections.length > 120) errors.push(`Too many sections: ${o.sections.length} (need 60-120)`);
 
   const nums = new Set<number>();
   for (const s of o.sections) {
@@ -215,7 +341,7 @@ function validateOutline(o: any): string[] {
 
   if (!nums.has(o.start_section)) errors.push(`start_section ${o.start_section} not in sections`);
 
-  // Check links point to valid sections
+  // ZERO broken links
   let brokenLinks = 0;
   for (const s of o.sections) {
     for (const c of (s.choices || [])) {
@@ -225,11 +351,13 @@ function validateOutline(o: any): string[] {
       }
     }
   }
-  if (brokenLinks > 5) errors.push(`${brokenLinks} broken section links`);
+  if (brokenLinks > 0) errors.push(`${brokenLinks} broken section links (must be 0)`);
 
-  // Check at least one ending
+  // Endings
   const endings = o.sections.filter((s: any) => s.is_ending);
-  if (endings.length === 0) errors.push("No endings");
+  if (endings.length < 5) errors.push(`Only ${endings.length} endings (need 5-8)`);
+  const trueEndings = o.sections.filter((s: any) => s.is_true_ending);
+  if (trueEndings.length !== 1) errors.push(`${trueEndings.length} true endings (need exactly 1)`);
 
   return errors;
 }

@@ -1,4 +1,4 @@
-import { GameState, Resources, Tracks, StatusEffect, Stats, MADNESS_THRESHOLDS, TAINT_THRESHOLDS, TRAITS, Choice, Section } from './types';
+import { GameState, Resources, Tracks, StatusEffect, Stats, MADNESS_THRESHOLDS, TAINT_THRESHOLDS, TRAITS, Choice, Section, getActiveTwist } from './types';
 
 export function createInitialGameState(
   runId: string,
@@ -10,7 +10,6 @@ export function createInitialGameState(
   const trait = TRAITS.find(t => t.key === traitKey);
   const resources: Resources = { health: 10, focus: 6, luck: 3 };
 
-  // Apply trait start bonuses
   if (trait?.mechanical.type === 'start_bonus' && trait.mechanical.resource) {
     resources[trait.mechanical.resource] += trait.mechanical.bonus || 0;
   }
@@ -83,18 +82,77 @@ export function navigateToSection(state: GameState, sectionNumber: number): Game
   };
 }
 
+/** Activate twist when entering a twist section */
+export function activateTwist(state: GameState, twistType: string): GameState {
+  // Don't activate twice
+  if (getActiveTwist(state.status_effects)) return state;
+
+  const twistEffect: StatusEffect = {
+    key: 'TWIST',
+    name: twistType === 'DebtWrit' ? 'Debt Writ' : twistType === 'GreyNotice' ? 'Grey Notice' : 'Hollow Contract',
+    source: 'twist',
+    description: twistType === 'DebtWrit' ? 'Spending Luck also +1 Taint.'
+      : twistType === 'GreyNotice' ? 'Embracing Darkness also +1 Madness and Marked.'
+      : 'Focus costs 2 but reduces TN by 2.',
+    type: twistType,
+    active: true,
+  };
+
+  return {
+    ...state,
+    status_effects: [...state.status_effects, twistEffect],
+    log: [...state.log, { section: state.current_section, text: `TWIST ACTIVATED: ${twistEffect.name}`, timestamp: Date.now() }],
+  };
+}
+
 export function spendLuck(state: GameState, amount: number = 1): GameState | null {
   if (state.resources.luck < amount) return null;
-  return applyResourceChange(state, { luck: -amount });
+  let newState = applyResourceChange(state, { luck: -amount });
+
+  // DebtWrit twist: spending Luck also +1 Taint
+  const twist = getActiveTwist(newState.status_effects);
+  if (twist?.type === 'DebtWrit') {
+    newState = applyTrackChange(newState, { taint: 1 });
+  }
+
+  return newState;
 }
 
 export function spendFocus(state: GameState): GameState | null {
+  const twist = getActiveTwist(state.status_effects);
+
+  if (twist?.type === 'HollowContract') {
+    // Costs 2 Focus but reduces TN by 2
+    if (state.resources.focus < 2) return null;
+    return applyResourceChange(state, { focus: -2 });
+  }
+
   if (state.resources.focus < 1) return null;
   return applyResourceChange(state, { focus: -1 });
 }
 
+/** Get TN reduction from Focus spend (affected by HollowContract twist) */
+export function getFocusTnReduction(state: GameState): number {
+  const twist = getActiveTwist(state.status_effects);
+  return twist?.type === 'HollowContract' ? 2 : 1;
+}
+
 export function embraceDarkness(state: GameState, track: 'madness' | 'taint'): GameState {
-  return applyTrackChange(state, { [track]: 1 });
+  let newState = applyTrackChange(state, { [track]: 1 });
+
+  // GreyNotice twist: embracing also +1 Madness and Marked
+  const twist = getActiveTwist(newState.status_effects);
+  if (twist?.type === 'GreyNotice') {
+    newState = applyTrackChange(newState, { madness: 1 });
+    if (!newState.status_effects.find(e => e.key === 'marked')) {
+      newState = {
+        ...newState,
+        status_effects: [...newState.status_effects, MADNESS_THRESHOLDS[7]],
+      };
+    }
+  }
+
+  return newState;
 }
 
 export function useTraitAbility(state: GameState, abilityKey: string): GameState {
@@ -114,6 +172,15 @@ export function canMakeGatedChoice(state: GameState, choice: Choice): boolean {
   }
   if (choice.required_codex_key) {
     return true; // checked at UI level with DB
+  }
+  // Clue gate
+  if (choice.required_clue_tags && choice.required_clue_tags.length > 0) {
+    const minRequired = choice.min_clues_required || choice.required_clue_tags.length;
+    const playerClueTags = state.inventory
+      .filter(item => item.is_clue)
+      .flatMap(item => item.tags.filter(t => t.startsWith('Clue:')));
+    const matchCount = choice.required_clue_tags.filter(tag => playerClueTags.includes(tag)).length;
+    return matchCount >= minRequired;
   }
   return true;
 }
@@ -143,7 +210,7 @@ export function serializeGameState(state: GameState) {
 export function deserializeGameState(runId: string, data: any): GameState {
   const allEffects = (data.status_effects_json || []) as any[];
   const traitUsed = allEffects.filter((e: any) => e.source === 'trait' && e.key?.startsWith('used_')).map((e: any) => e.key.replace('used_', ''));
-  const statusEffects = allEffects.filter((e: any) => e.source !== 'trait' || !e.key?.startsWith('used_'));
+  const statusEffects = allEffects.filter((e: any) => !(e.source === 'trait' && e.key?.startsWith('used_')));
   
   return {
     run_id: runId,

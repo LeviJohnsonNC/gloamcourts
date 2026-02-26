@@ -12,12 +12,16 @@ RULES:
 - Write 120-220 words of narrator_text.
 - Address the reader as YOU.
 - Mention at least one proper noun from the section context (location, faction, NPC name).
+- If world_bible is provided, USE those names/places/faction tells. Do NOT invent new factions or places.
 - NEVER introduce new items, mechanics, or resources not in the game.
 - NEVER decide dice outcomes or reveal what happens on success/failure.
 - Only reference items/effects the engine will actually grant (provided in context).
 - Keep dark comedy tone but maintain genuine tension.
-- For choice_flavor: write 8-16 word italic flavor lines for each choice. These are atmospheric only — the actual mechanical labels are provided separately.
-- If has_plate is true, write a plate_caption (1-2 sentences, descriptive, evocative) and plate_prompt (a detailed image generation prompt in the style of dark ink-wash illustration).
+- Add at most 1 darkly funny "reader insult" per section (e.g., "You, being the kind of person who...").
+- For choice_flavor: write 8-16 word italic flavor lines for each choice. If a choice is risky, hint at risk WITHOUT numbers.
+- If has_plate is true, write a plate_caption (1-2 sentences) and plate_prompt (detailed ink-wash illustration prompt).
+- For death sections, include an epitaph_prompt (1 sentence seed for varied epitaphs).
+- If is_twist is true, make the narration dramatic — something fundamental has shifted.
 
 OUTPUT strict JSON only:
 {
@@ -25,7 +29,8 @@ OUTPUT strict JSON only:
   "narrator_text": string,
   "choice_flavor": { [choice_id]: string },
   "plate_caption": string|null,
-  "plate_prompt": string|null
+  "plate_prompt": string|null,
+  "epitaph_prompt": string|null
 }`;
 
 serve(async (req) => {
@@ -44,8 +49,8 @@ serve(async (req) => {
     );
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
+    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
 
@@ -68,14 +73,11 @@ serve(async (req) => {
       });
     }
 
-    // Rate limit: 200 section generations per day per user
-    const userId = claimsData.claims.sub;
-    const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
+    // Rate limit: 150 section generations per run
     const { count } = await supabase
       .from("run_sections_cache")
       .select("*", { count: "exact", head: true })
       .eq("run_id", runId);
-    // Simple count-based limit per run
     if ((count || 0) >= 150) {
       return new Response(JSON.stringify({ error: "rate_limited", message: "Too many sections generated for this run." }), {
         status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -87,7 +89,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "AI not configured" }), { status: 500, headers: corsHeaders });
     }
 
-    // Build context prompt
     const snapshotStr = snapshot ? JSON.stringify(snapshot, null, 1) : "No snapshot provided";
     const userPrompt = `Generate section text for section ${sectionNumber}.
 
@@ -115,6 +116,16 @@ Output ONLY the JSON object.`;
     if (!response.ok) {
       const errText = await response.text();
       console.error("AI gateway error:", response.status, errText);
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "rate_limited", message: "Narrator rate limited." }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "payment_required", message: "AI credits exhausted." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       return new Response(JSON.stringify({ error: "ai_error", message: "The Narrator is unavailable." }), {
         status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
