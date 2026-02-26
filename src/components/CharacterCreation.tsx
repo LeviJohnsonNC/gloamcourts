@@ -26,10 +26,10 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      className="max-w-2xl mx-auto p-8 page-parchment rounded-lg border-ornate"
+      className="max-w-2xl mx-auto p-4 sm:p-8 page-parchment rounded-lg border-ornate w-full"
     >
-      <h2 className="font-display text-2xl text-gold mb-2 text-center">Create Your Character</h2>
-      <p className="text-muted-foreground text-center mb-6 font-narrative">
+      <h2 className="font-display text-xl sm:text-2xl text-gold mb-2 text-center">Create Your Character</h2>
+      <p className="text-muted-foreground text-center mb-6 font-narrative text-sm sm:text-base">
         You are about to enter the Gloam Courts. Choose your strengths wisely. The Courts do not forgive weakness. Or strength, for that matter.
       </p>
 
@@ -40,15 +40,15 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
         </h3>
         <div className="space-y-2">
           {STAT_NAMES.map(stat => (
-            <div key={stat} className="flex items-center justify-between bg-muted/30 rounded px-3 py-2">
-              <div>
+            <div key={stat} className="flex items-center justify-between bg-muted/30 rounded px-3 py-2 gap-2">
+              <div className="min-w-0">
                 <span className="font-display text-sm text-foreground">{stat}</span>
-                <span className="text-xs text-muted-foreground ml-2">{STAT_DESCRIPTIONS[stat]}</span>
+                <span className="text-xs text-muted-foreground ml-2 hidden sm:inline">{STAT_DESCRIPTIONS[stat]}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => adjustStat(stat, -1)} className="w-6 h-6 rounded border border-border text-muted-foreground hover:text-foreground text-sm">−</button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => adjustStat(stat, -1)} className="w-8 h-8 rounded border border-border text-muted-foreground hover:text-foreground text-sm touch-manipulation flex items-center justify-center">−</button>
                 <span className="font-display w-6 text-center text-gold">{stats[stat]}</span>
-                <button onClick={() => adjustStat(stat, 1)} className="w-6 h-6 rounded border border-border text-muted-foreground hover:text-foreground text-sm">+</button>
+                <button onClick={() => adjustStat(stat, 1)} className="w-8 h-8 rounded border border-border text-muted-foreground hover:text-foreground text-sm touch-manipulation flex items-center justify-center">+</button>
               </div>
             </div>
           ))}
@@ -63,7 +63,7 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
             <button
               key={trait.key}
               onClick={() => setSelectedTrait(trait.key)}
-              className={`text-left p-3 rounded border transition-colors ${
+              className={`text-left p-3 rounded border transition-colors touch-manipulation ${
                 selectedTrait === trait.key
                   ? 'border-gold bg-gold/10'
                   : 'border-border bg-muted/20 hover:border-gold-dim'
@@ -84,14 +84,14 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
           value={description}
           onChange={e => setDescription(e.target.value)}
           placeholder="A brief description of the fool about to enter the Courts..."
-          className="w-full bg-muted/30 border border-border rounded p-3 text-sm text-foreground placeholder:text-muted-foreground font-narrative resize-none h-20"
+          className="w-full bg-muted/30 border border-border rounded p-3 text-base text-foreground placeholder:text-muted-foreground font-narrative resize-none h-20"
         />
       </div>
 
       <Button
         onClick={() => canSubmit && onComplete(stats, selectedTrait, description)}
         disabled={!canSubmit}
-        className="w-full bg-primary hover:bg-blood-glow text-primary-foreground font-display tracking-wider"
+        className="w-full bg-primary hover:bg-blood-glow text-primary-foreground font-display tracking-wider py-3 touch-manipulation"
       >
         Enter the Gloam Courts
       </Button>

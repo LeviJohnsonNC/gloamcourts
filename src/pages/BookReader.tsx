@@ -10,7 +10,9 @@ import { Stats, TRAITS } from '@/rules/types';
 import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
 import { fetchOrGenerateSection, CachedSection } from '@/lib/llmService';
-import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb } from 'lucide-react';
+import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb, MoreVertical } from 'lucide-react';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/use-toast';
 
 const BookReader: React.FC = () => {
@@ -132,6 +134,7 @@ const BookReader: React.FC = () => {
     : null;
 
   const playerClues = gameState?.inventory.filter(i => i.is_clue) || [];
+  const isMobile = useIsMobile();
 
   if (loading) {
     return (
@@ -174,52 +177,88 @@ const BookReader: React.FC = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-background/80 backdrop-blur border-b border-border px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="text-muted-foreground hover:text-foreground"><Home size={18} /></button>
-          <h1 className="font-display text-sm text-gold tracking-wider">{outline?.title}</h1>
+      <header className="sticky top-0 z-40 bg-background/80 backdrop-blur border-b border-border px-3 sm:px-4 py-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onClick={() => navigate('/')} className="text-muted-foreground hover:text-foreground p-1.5 touch-manipulation"><Home size={18} /></button>
+          <h1 className="font-display text-sm text-gold tracking-wider truncate max-w-[120px] sm:max-w-none">{outline?.title}</h1>
         </div>
-        <div className="flex items-center gap-2">
-          {outline?.seed && (
-            <button
-              onClick={handleCopySeed}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-gold transition-colors font-display"
-              title={`Run Code: ${outline.seed}`}
-            >
-              {copied ? <Check size={12} className="text-gold" /> : <Copy size={12} />}
-              <span className="hidden sm:inline">{outline.seed}</span>
-            </button>
-          )}
-          <div className="flex items-center gap-1">
-            <input
-              value={sectionInput}
-              onChange={e => setSectionInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleGoToSection()}
-              placeholder="§"
-              className="w-12 bg-muted/30 border border-border rounded px-2 py-1 text-xs text-foreground text-center placeholder:text-muted-foreground"
-            />
-          </div>
-          <button
-            onClick={toggleAiArt}
-            className={`text-xs px-2 py-1 rounded border font-display transition-colors ${
-              aiArtEnabled ? 'border-gold bg-gold/10 text-gold' : 'border-border text-muted-foreground'
-            }`}
-            title="Toggle AI art plates"
-          >
-            🎨
-          </button>
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {playerClues.length > 0 && (
-            <button onClick={() => setShowClues(true)} className="text-muted-foreground hover:text-gold transition-colors relative" title="Clues">
+            <button onClick={() => setShowClues(true)} className="text-muted-foreground hover:text-gold transition-colors relative p-1.5 touch-manipulation" title="Clues">
               <Lightbulb size={18} />
-              <span className="absolute -top-1 -right-1 bg-gold text-background text-[9px] rounded-full w-3.5 h-3.5 flex items-center justify-center font-display">{playerClues.length}</span>
+              <span className="absolute -top-0.5 -right-0.5 bg-gold text-background text-[9px] rounded-full w-3.5 h-3.5 flex items-center justify-center font-display">{playerClues.length}</span>
             </button>
           )}
-          <button onClick={() => setShowCodex(true)} className="text-muted-foreground hover:text-gold transition-colors" title="Codex">
+          <button onClick={() => setShowCodex(true)} className="text-muted-foreground hover:text-gold transition-colors p-1.5 touch-manipulation" title="Codex">
             <Book size={18} />
           </button>
-          <button onClick={() => setShowRumors(true)} className="text-muted-foreground hover:text-gold transition-colors" title="Rumors">
+          <button onClick={() => setShowRumors(true)} className="text-muted-foreground hover:text-gold transition-colors p-1.5 touch-manipulation" title="Rumors">
             <Scroll size={18} />
           </button>
+
+          {/* Desktop: inline controls */}
+          {!isMobile && (
+            <>
+              {outline?.seed && (
+                <button
+                  onClick={handleCopySeed}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-gold transition-colors font-display p-1.5"
+                  title={`Run Code: ${outline.seed}`}
+                >
+                  {copied ? <Check size={12} className="text-gold" /> : <Copy size={12} />}
+                  <span>{outline.seed}</span>
+                </button>
+              )}
+              <input
+                value={sectionInput}
+                onChange={e => setSectionInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleGoToSection()}
+                placeholder="§"
+                className="w-12 bg-muted/30 border border-border rounded px-2 py-1 text-xs text-foreground text-center placeholder:text-muted-foreground"
+              />
+              <button
+                onClick={toggleAiArt}
+                className={`text-xs px-2 py-1 rounded border font-display transition-colors ${
+                  aiArtEnabled ? 'border-gold bg-gold/10 text-gold' : 'border-border text-muted-foreground'
+                }`}
+                title="Toggle AI art plates"
+              >
+                🎨
+              </button>
+            </>
+          )}
+
+          {/* Mobile: overflow menu */}
+          {isMobile && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground p-1.5 touch-manipulation">
+                  <MoreVertical size={18} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="bg-card border-border">
+                {outline?.seed && (
+                  <DropdownMenuItem onClick={handleCopySeed} className="text-xs font-display gap-2">
+                    {copied ? <Check size={12} className="text-gold" /> : <Copy size={12} />}
+                    Copy Run Code
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem className="p-0">
+                  <input
+                    value={sectionInput}
+                    onChange={e => setSectionInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleGoToSection(); }}
+                    placeholder="Go to section §"
+                    className="w-full bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+                    onClick={e => e.stopPropagation()}
+                  />
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={toggleAiArt} className="text-xs font-display gap-2">
+                  🎨 AI Art {aiArtEnabled ? '(On)' : '(Off)'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </header>
 
