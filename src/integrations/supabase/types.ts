@@ -144,6 +144,88 @@ export type Database = {
         }
         Relationships: []
       }
+      run_assets: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          prompt: string
+          run_id: string
+          section_number: number
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind?: string
+          prompt?: string
+          run_id: string
+          section_number: number
+          url?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          prompt?: string
+          run_id?: string
+          section_number?: number
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "run_assets_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      run_sections_cache: {
+        Row: {
+          choice_flavor_json: Json
+          created_at: string
+          narrator_text: string
+          plate_caption: string | null
+          plate_prompt: string | null
+          plate_url: string | null
+          run_id: string
+          section_number: number
+          title: string
+        }
+        Insert: {
+          choice_flavor_json?: Json
+          created_at?: string
+          narrator_text?: string
+          plate_caption?: string | null
+          plate_prompt?: string | null
+          plate_url?: string | null
+          run_id: string
+          section_number: number
+          title?: string
+        }
+        Update: {
+          choice_flavor_json?: Json
+          created_at?: string
+          narrator_text?: string
+          plate_caption?: string | null
+          plate_prompt?: string | null
+          plate_url?: string | null
+          run_id?: string
+          section_number?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "run_sections_cache_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       run_state: {
         Row: {
           autosave_at: string
