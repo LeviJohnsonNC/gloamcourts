@@ -184,9 +184,12 @@ export type Database = {
       }
       run_sections_cache: {
         Row: {
+          beat_tag: string | null
           choice_flavor_json: Json
           created_at: string
+          device_tag: string | null
           narrator_text: string
+          npc_mentions: string[] | null
           plate_caption: string | null
           plate_prompt: string | null
           plate_url: string | null
@@ -195,9 +198,12 @@ export type Database = {
           title: string
         }
         Insert: {
+          beat_tag?: string | null
           choice_flavor_json?: Json
           created_at?: string
+          device_tag?: string | null
           narrator_text?: string
+          npc_mentions?: string[] | null
           plate_caption?: string | null
           plate_prompt?: string | null
           plate_url?: string | null
@@ -206,9 +212,12 @@ export type Database = {
           title?: string
         }
         Update: {
+          beat_tag?: string | null
           choice_flavor_json?: Json
           created_at?: string
+          device_tag?: string | null
           narrator_text?: string
+          npc_mentions?: string[] | null
           plate_caption?: string | null
           plate_prompt?: string | null
           plate_url?: string | null

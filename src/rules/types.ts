@@ -148,7 +148,7 @@ export type CombatAction = 'attack' | 'defend' | 'trick' | 'flee' | 'advance' | 
 export interface WorldBible {
   courts: { name: string; motto: string; signature: string; taboo: string }[];
   factions: { name: string; goal: string; method: string; tell: string }[];
-  recurring_npcs: { name: string; role: string; voice_tick: string; secret: string }[];
+  recurring_npcs: { name: string; role: string; voice_tick: string; tell?: string; secret: string }[];
   signature_places: { name: string; one_line: string }[];
   linguistic_rules: { naming_style: string; forbidden_words: string[] };
 }

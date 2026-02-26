@@ -5,6 +5,7 @@ import { canMakeGatedChoice } from '@/rules/engine';
 import InkPlate from './InkPlate';
 import { CachedSection } from '@/lib/llmService';
 import { generatePlate } from '@/lib/llmService';
+import { computeGutFeel, GUT_FEEL_COLORS, GutFeelLevel } from '@/lib/gutFeel';
 import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame, Loader2, AlertTriangle } from 'lucide-react';
 
 interface BookSpreadProps {
@@ -79,7 +80,23 @@ const BookSpread: React.FC<BookSpreadProps> = ({
       transition={{ duration: 0.5 }}
       className="w-full max-w-3xl mx-auto"
     >
-      <div className="page-parchment rounded-lg border-ornate p-6 sm:p-10 min-h-[60vh]">
+      <div className="page-parchment rounded-lg border-ornate p-6 sm:p-10 min-h-[60vh] relative overflow-hidden">
+        {/* Codex unlock ink stamp */}
+        {section.codex_unlock && (
+          <div className="absolute top-4 right-4 animate-ink-stamp pointer-events-none">
+            <div className="w-16 h-16 rounded-full border-2 border-gold/60 flex items-center justify-center rotate-[-12deg]">
+              <span className="font-display text-[10px] text-gold/80 text-center leading-tight uppercase tracking-wider">Codex<br/>Updated</span>
+            </div>
+          </div>
+        )}
+
+        {/* Twist proclamation banner */}
+        {section.is_twist && (
+          <div className="mb-6 animate-proclamation border-y border-gold/40 py-3 bg-destructive/5">
+            <p className="font-display text-xs text-center text-gold tracking-[0.3em] uppercase">⚡ A Proclamation Has Been Nailed to the Door ⚡</p>
+          </div>
+        )}
+
         {/* Section number + act tag */}
         <div className="text-center mb-6">
           <span className="section-number text-3xl">{section.section_number}</span>
@@ -313,7 +330,12 @@ const BookSpread: React.FC<BookSpreadProps> = ({
                     <div>
                       <span>{choice.label}</span>
                       {choice.type === 'test' && (
-                        <span className="ml-2 text-xs text-gold-dim">[{choice.stat_used} test, TN {choice.tn}]</span>
+                        <span className="ml-2 text-xs text-gold-dim">[{choice.stat_used} test]</span>
+                      )}
+                      {choice.type === 'test' && choice.tn && (
+                        <span className={`ml-1 text-xs ${GUT_FEEL_COLORS[computeGutFeel(choice.tn, choice.opposing_pool, choice.base_pool)]}`}>
+                          ({computeGutFeel(choice.tn, choice.opposing_pool, choice.base_pool)})
+                        </span>
                       )}
                       {choice.type === 'combat' && (
                         <span className="ml-2 text-xs text-destructive">[Combat]</span>
