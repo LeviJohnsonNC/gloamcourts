@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
-import { X, Search, Lock, Unlock } from 'lucide-react';
+import { X, Search, Lock, Unlock, Lightbulb } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { InventoryItem } from '@/rules/types';
 
 interface BookmarkPanelProps {
-  type: 'codex' | 'rumors';
+  type: 'codex' | 'rumors' | 'clues';
   visible: boolean;
   onClose: () => void;
+  clues?: InventoryItem[];
 }
 
-const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose }) => {
+const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose, clues = [] }) => {
   const { user } = useAuth();
   const [entries, setEntries] = useState<any[]>([]);
   const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
@@ -19,7 +21,7 @@ const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose })
 
   useEffect(() => {
     if (!visible || !user) return;
-    loadData();
+    if (type !== 'clues') loadData();
   }, [visible, user]);
 
   const loadData = async () => {
@@ -28,7 +30,7 @@ const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose })
       const { data: userUnlocks } = await supabase.from('codex_unlocks').select('codex_key').eq('user_id', user!.id);
       setEntries(allEntries || []);
       setUnlocked(new Set((userUnlocks || []).map((u: any) => u.codex_key)));
-    } else {
+    } else if (type === 'rumors') {
       const { data: allRumors } = await supabase.from('rumors_catalog').select('*');
       const { data: userRumors } = await supabase.from('user_rumors').select('rumor_key, level').eq('user_id', user!.id);
       const unlockedKeys = new Set((userRumors || []).map((r: any) => r.rumor_key));
@@ -37,10 +39,12 @@ const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose })
     }
   };
 
-  const filtered = entries.filter(e => {
-    const title = type === 'codex' ? e.title : e.title;
-    return title.toLowerCase().includes(search.toLowerCase());
-  });
+  const panelTitle = type === 'codex' ? 'Codex' : type === 'rumors' ? 'Rumors' : 'Clues';
+
+  // For clues panel, use inventory data directly
+  const displayItems = type === 'clues'
+    ? clues.filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
+    : entries.filter(e => e.title.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <AnimatePresence>
@@ -54,7 +58,7 @@ const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose })
         >
           <div className="p-4 border-b border-border flex items-center justify-between">
             <h2 className="font-display text-lg text-gold tracking-wider uppercase">
-              {type === 'codex' ? 'Codex' : 'Rumors'}
+              {panelTitle}
             </h2>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
           </div>
@@ -72,34 +76,60 @@ const BookmarkPanel: React.FC<BookmarkPanelProps> = ({ type, visible, onClose })
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {filtered.map(entry => {
-              const key = type === 'codex' ? entry.codex_key : entry.rumor_key;
-              const isUnlocked = unlocked.has(key);
-
-              return (
-                <button
-                  key={key}
-                  onClick={() => isUnlocked && setSelected(entry)}
-                  className={`w-full text-left p-3 rounded border transition-colors ${
-                    isUnlocked ? 'border-gold-dim bg-muted/20 hover:bg-muted/40' : 'border-border bg-muted/10 opacity-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    {isUnlocked ? <Unlock size={12} className="text-gold" /> : <Lock size={12} className="text-muted-foreground" />}
-                    <span className={`font-display text-sm ${isUnlocked ? 'text-foreground' : 'text-muted-foreground'}`}>
-                      {isUnlocked ? entry.title : '???'}
-                    </span>
-                  </div>
-                  {isUnlocked && type === 'codex' && entry.tags && (
-                    <div className="flex gap-1 mt-1">
-                      {entry.tags.map((tag: string) => (
-                        <span key={tag} className="text-xs bg-muted rounded px-1.5 py-0.5 text-muted-foreground">{tag}</span>
+            {type === 'clues' ? (
+              displayItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground font-narrative italic text-center mt-8">No clues discovered yet. Keep investigating.</p>
+              ) : (
+                (displayItems as InventoryItem[]).map(clue => (
+                  <div
+                    key={clue.id}
+                    className="w-full text-left p-3 rounded border border-gold-dim bg-muted/20"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Lightbulb size={12} className="text-gold" />
+                      <span className="font-display text-sm text-foreground">{clue.name}</span>
+                    </div>
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                      {clue.tags.filter(t => t.startsWith('Clue:')).map((tag: string) => (
+                        <span key={tag} className="text-xs bg-gold/10 text-gold-dim rounded px-1.5 py-0.5 font-display">{tag.replace('Clue:', '')}</span>
                       ))}
                     </div>
-                  )}
-                </button>
-              );
-            })}
+                    {clue.description && (
+                      <p className="text-xs text-muted-foreground mt-1 font-narrative italic">{clue.description}</p>
+                    )}
+                  </div>
+                ))
+              )
+            ) : (
+              displayItems.map((entry: any) => {
+                const key = type === 'codex' ? entry.codex_key : entry.rumor_key;
+                const isUnlocked = unlocked.has(key);
+
+                return (
+                  <button
+                    key={key}
+                    onClick={() => isUnlocked && setSelected(entry)}
+                    className={`w-full text-left p-3 rounded border transition-colors ${
+                      isUnlocked ? 'border-gold-dim bg-muted/20 hover:bg-muted/40' : 'border-border bg-muted/10 opacity-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {isUnlocked ? <Unlock size={12} className="text-gold" /> : <Lock size={12} className="text-muted-foreground" />}
+                      <span className={`font-display text-sm ${isUnlocked ? 'text-foreground' : 'text-muted-foreground'}`}>
+                        {isUnlocked ? entry.title : '???'}
+                      </span>
+                    </div>
+                    {isUnlocked && type === 'codex' && entry.tags && (
+                      <div className="flex gap-1 mt-1">
+                        {entry.tags.map((tag: string) => (
+                          <span key={tag} className="text-xs bg-muted rounded px-1.5 py-0.5 text-muted-foreground">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </button>
+                );
+              })
+            )}
           </div>
 
           {/* Detail view */}

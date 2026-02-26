@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { GameState, Section, AdventureOutline, Choice, Stats, CombatState, CombatAction, RollOutcome, RollContext } from '@/rules/types';
-import { createInitialGameState, serializeGameState, deserializeGameState, navigateToSection, applyResourceChange, applyTrackChange, isPlayerDead, embraceDarkness, useTraitAbility, hasUsedTraitAbility } from '@/rules/engine';
+import { createInitialGameState, serializeGameState, deserializeGameState, navigateToSection, applyResourceChange, applyTrackChange, isPlayerDead, embraceDarkness, useTraitAbility, hasUsedTraitAbility, activateTwist, spendLuck, getFocusTnReduction } from '@/rules/engine';
 import { initCombat, resolveCombatRound, isCombatOver, changeStance } from '@/rules/combat';
 import { opposedRoll, simpleRoll, getPoolSize, getTargetNumber, rerollDice, countSuccesses, convertLowestDie } from '@/rules/dice';
 import { generateOutline as generateDemoOutline } from '@/generators/demoOutlineGenerator';
@@ -24,7 +24,6 @@ export function useGameState() {
   const createNewRun = useCallback(async (userId: string, seed: string, stats: Stats, traitKey: string, characterDescription: string, isSharedReplay: boolean = false) => {
     setGeneratingOutline(true);
 
-    // Try LLM outline first, fall back to demo
     let adventure: AdventureOutline | null = null;
     try {
       adventure = await generateLLMOutline(seed);
@@ -141,6 +140,21 @@ export function useGameState() {
     return 'general';
   }, []);
 
+  /** Check for twist activation when navigating to a section */
+  const checkTwistActivation = useCallback((state: GameState, section: Section): GameState => {
+    if (section.is_twist && section.twist_type) {
+      const newState = activateTwist(state, section.twist_type);
+      if (newState !== state) {
+        toast({
+          title: '⚡ Something has changed...',
+          description: `The rules of the Courts have shifted. ${section.twist_type === 'DebtWrit' ? 'Your luck now has paperwork attached.' : section.twist_type === 'GreyNotice' ? 'The Grey Protocol is watching.' : 'Your focus comes at a steeper price.'}`,
+        });
+      }
+      return newState;
+    }
+    return state;
+  }, []);
+
   const makeChoice = useCallback(async (choice: Choice) => {
     if (!gameState || !outline) return;
 
@@ -158,6 +172,11 @@ export function useGameState() {
       }
       const target = choice.next_section!;
       newState = navigateToSection(newState, target);
+
+      // Check twist
+      const targetSection = outline.sections.find(s => s.section_number === target);
+      if (targetSection) newState = checkTwistActivation(newState, targetSection);
+
       setGameState(newState);
       await autosave(newState);
 
@@ -166,9 +185,10 @@ export function useGameState() {
     } else if (choice.type === 'test') {
       const stat = choice.stat_used!;
       const context = getRollContext(choice);
-      const hasRanged = newState.inventory.some(i => i.tags.includes('ranged'));
+      const hasRanged = newState.inventory.some(i => i.tags.includes('ranged') || i.tags.includes('Ranged'));
       const pool = getPoolSize(stat, newState.stats, newState.stance, false, newState.status_effects, embraceBonusDice, newState.trait_key, context, newState.range_band, hasRanged);
-      const tn = getTargetNumber(choice.tn || 6, newState.status_effects, focusSpentThisRoll);
+      const focusReduction = focusSpentThisRoll ? getFocusTnReduction(newState) : 0;
+      const tn = getTargetNumber(choice.tn || 6, newState.status_effects, focusReduction > 0);
 
       let rollResult;
       if (choice.opposing_pool) {
@@ -202,6 +222,11 @@ export function useGameState() {
       }
 
       newState = navigateToSection(newState, target);
+
+      // Check twist
+      const targetSection = outline.sections.find(s => s.section_number === target);
+      if (targetSection) newState = checkTwistActivation(newState, targetSection);
+
       newState.log = [...newState.log, {
         section: newState.current_section,
         text: `Rolled ${stat}: ${rollResult.playerRoll.dice.join(', ')} (TN ${tn}) — ${rollResult.outcome}`,
@@ -223,13 +248,27 @@ export function useGameState() {
         toast({ title: 'Locked', description: `You need an item with the "${choice.required_item_tag}" tag.`, variant: 'destructive' });
         return;
       }
+      // Clue gate check
+      if (choice.required_clue_tags && choice.required_clue_tags.length > 0) {
+        const minRequired = choice.min_clues_required || choice.required_clue_tags.length;
+        const playerClueTags = newState.inventory.filter(i => i.is_clue).flatMap(i => i.tags.filter(t => t.startsWith('Clue:')));
+        const matchCount = choice.required_clue_tags.filter(t => playerClueTags.includes(t)).length;
+        if (matchCount < minRequired) {
+          toast({ title: 'Insufficient leverage', description: `You need more clues. (${matchCount}/${minRequired})`, variant: 'destructive' });
+          return;
+        }
+      }
       const target = choice.next_section!;
       newState = navigateToSection(newState, target);
+
+      const targetSection = outline.sections.find(s => s.section_number === target);
+      if (targetSection) newState = checkTwistActivation(newState, targetSection);
+
       setGameState(newState);
       await autosave(newState);
       if (choice.codex_unlock) await unlockCodex(choice.codex_unlock);
     }
-  }, [gameState, outline, autosave, embraceBonusDice, focusSpentThisRoll, getRollContext]);
+  }, [gameState, outline, autosave, embraceBonusDice, focusSpentThisRoll, getRollContext, checkTwistActivation]);
 
   const doCombatAction = useCallback(async (action: CombatAction) => {
     if (!gameState || !combatState || !outline) return;
@@ -247,7 +286,9 @@ export function useGameState() {
 
       if (playerWon) {
         const target = combatChoice?.success_section || gameState.current_section;
-        const finalState = navigateToSection(newGs, target);
+        let finalState = navigateToSection(newGs, target);
+        const targetSection = outline.sections.find(s => s.section_number === target);
+        if (targetSection) finalState = checkTwistActivation(finalState, targetSection);
         setGameState(finalState);
         await autosave(finalState);
         if (combatChoice?.codex_unlock) await unlockCodex(combatChoice.codex_unlock);
@@ -263,7 +304,7 @@ export function useGameState() {
       setCombatState(newCs);
       await autosave(newGs);
     }
-  }, [gameState, combatState, outline, autosave]);
+  }, [gameState, combatState, outline, autosave, checkTwistActivation]);
 
   const changeCombatStance = useCallback((stance: 'Aggressive' | 'Guarded' | 'Cunning') => {
     if (!combatState) return;
@@ -358,14 +399,20 @@ export function useGameState() {
     const newRoll: RollOutcome = { ...lastRoll, playerRoll: newPlayerRoll, margin: newMargin, outcome };
     setLastRoll(newRoll);
 
-    const newState = applyResourceChange(gameState, { luck: -1 });
+    // Use engine spendLuck which handles DebtWrit twist
+    const newState = spendLuck(gameState);
+    if (!newState) return;
     setGameState(newState);
     await autosave(newState);
   }, [gameState, lastRoll, autosave]);
 
   const spendFocusReduceTn = useCallback(async () => {
-    if (!gameState || gameState.resources.focus < 1 || focusSpentThisRoll) return;
-    const newState = applyResourceChange(gameState, { focus: -1 });
+    if (!gameState || focusSpentThisRoll) return;
+    const twist = gameState.status_effects.find(e => e.key === 'TWIST' && e.active);
+    const focusCost = twist?.type === 'HollowContract' ? 2 : 1;
+    if (gameState.resources.focus < focusCost) return;
+    
+    const newState = applyResourceChange(gameState, { focus: -focusCost });
     setGameState(newState);
     setFocusSpentThisRoll(true);
     await autosave(newState);

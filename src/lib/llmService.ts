@@ -38,7 +38,12 @@ export async function generateLLMOutline(seed: string): Promise<AdventureOutline
 
     if (!result.valid || !result.outline) {
       console.error('Outline validation failed:', result.errors);
+      if (result.warnings.length > 0) console.warn('Outline warnings:', result.warnings);
       return null;
+    }
+
+    if (result.warnings.length > 0) {
+      console.warn('Outline warnings:', result.warnings);
     }
 
     return result.outline;
@@ -64,7 +69,6 @@ export async function fetchOrGenerateSection(
   outline: AdventureOutline,
 ): Promise<CachedSection | null> {
   try {
-    // Try cache first via direct DB query (faster than edge function for reads)
     const { data: cached } = await supabase
       .from('run_sections_cache')
       .select('*')
@@ -83,12 +87,12 @@ export async function fetchOrGenerateSection(
       };
     }
 
-    // If section already has substantial narrator_text from demo generator, use it
     if (section.narrator_text && section.narrator_text.length > 50 && !section.narrator_text.startsWith('stub')) {
-      return null; // Use the outline's built-in text
+      return null;
     }
 
-    // Build snapshot for LLM
+    // Build snapshot with world bible context
+    const worldBible = outline.world_bible;
     const snapshot = {
       section_number: section.section_number,
       outline_summary: section.title,
@@ -97,6 +101,9 @@ export async function fetchOrGenerateSection(
       is_boss: !!section.combat_enemy?.is_boss,
       is_death: section.is_death,
       is_ending: section.is_ending,
+      is_twist: section.is_twist,
+      twist_type: section.twist_type,
+      act_tag: section.act_tag,
       choices: section.choices.map((c, i) => ({
         choice_id: `choice_${i}`,
         label: c.label,
@@ -110,6 +117,15 @@ export async function fetchOrGenerateSection(
       stance: gameState.stance,
       range_band: gameState.range_band,
       inventory_tags: gameState.inventory.map(i => i.tags).flat(),
+      clues: gameState.inventory.filter(i => i.is_clue).map(i => i.name),
+      active_twist: gameState.status_effects.find(e => e.key === 'TWIST' && e.active)?.type || null,
+      // Include world bible for narration consistency
+      world_bible: worldBible ? {
+        courts: worldBible.courts?.map(c => c.name) || [],
+        factions: worldBible.factions?.map(f => `${f.name} (${f.tell})`) || [],
+        npcs: worldBible.recurring_npcs?.map(n => `${n.name}: ${n.voice_tick}`) || [],
+        places: worldBible.signature_places?.map(p => p.name) || [],
+      } : null,
     };
 
     const headers = await getAuthHeaders();
@@ -128,7 +144,7 @@ export async function fetchOrGenerateSection(
     return {
       title: data.title || section.title,
       narrator_text: data.narrator_text || '',
-      choice_flavor: data.choice_flavor_json || {},
+      choice_flavor: data.choice_flavor_json || data.choice_flavor || {},
       plate_caption: data.plate_caption,
       plate_prompt: data.plate_prompt,
       plate_url: data.plate_url,

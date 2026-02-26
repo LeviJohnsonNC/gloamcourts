@@ -56,13 +56,16 @@ export interface InventoryItem {
   name: string;
   tags: string[];
   description: string;
+  is_clue?: boolean;
 }
 
 export interface StatusEffect {
   key: string;
   name: string;
-  source: 'madness' | 'taint' | 'trait' | 'other';
+  source: 'madness' | 'taint' | 'trait' | 'other' | 'twist';
   description: string;
+  type?: string; // For twist effects
+  active?: boolean;
 }
 
 export interface DiceResult {
@@ -93,6 +96,8 @@ export interface Choice {
   stakes?: string;
   required_item_tag?: string;
   required_codex_key?: string;
+  required_clue_tags?: string[];
+  min_clues_required?: number;
   success_section?: number;
   fail_section?: number;
   next_section?: number;
@@ -122,6 +127,9 @@ export interface Section {
   rumor_unlock?: string;
   requires_codex_keys?: string[];
   alternate_section?: number;
+  is_twist?: boolean;
+  twist_type?: string;
+  act_tag?: 'ACT_I' | 'ACT_II' | 'ACT_III';
 }
 
 export interface CombatEnemy {
@@ -137,12 +145,21 @@ export interface CombatEnemy {
 
 export type CombatAction = 'attack' | 'defend' | 'trick' | 'flee' | 'advance' | 'withdraw';
 
+export interface WorldBible {
+  courts: { name: string; motto: string; signature: string; taboo: string }[];
+  factions: { name: string; goal: string; method: string; tell: string }[];
+  recurring_npcs: { name: string; role: string; voice_tick: string; secret: string }[];
+  signature_places: { name: string; one_line: string }[];
+  linguistic_rules: { naming_style: string; forbidden_words: string[] };
+}
+
 export interface AdventureOutline {
   title: string;
   seed: string;
   sections: Section[];
   start_section: number;
   required_codex_keys?: string[];
+  world_bible?: WorldBible;
 }
 
 export interface GameState {
@@ -249,13 +266,19 @@ export const TAINT_THRESHOLDS: Record<number, StatusEffect> = {
   10: { key: 'abomination', name: 'Abomination', source: 'taint', description: 'You are no longer entirely yourself. This is, depending on your perspective, an upgrade.' },
 };
 
+// Twist types
+export const TWIST_TYPES = {
+  DebtWrit: { key: 'TWIST', type: 'DebtWrit', name: 'Debt Writ', description: 'Your luck now has paperwork attached. Spending Luck also +1 Taint.' },
+  GreyNotice: { key: 'TWIST', type: 'GreyNotice', name: 'Grey Notice', description: 'The Grey Protocol is watching. Embracing Darkness also +1 Madness and applies Marked.' },
+  HollowContract: { key: 'TWIST', type: 'HollowContract', name: 'Hollow Contract', description: 'Focus costs double but reduces TN by 2 instead of 1.' },
+} as const;
+
 // Map roll contexts to determine trait applicability
 export function getTraitBonus(traitKey: string, stat: StatName, context?: RollContext): number {
   const trait = TRAITS.find(t => t.key === traitKey);
   if (!trait || trait.mechanical.type !== 'bonus_die') return 0;
   if (trait.mechanical.stat && trait.mechanical.stat !== stat) return 0;
   
-  // If trait has a context, check if it matches or is a parent category
   if (trait.mechanical.context) {
     if (!context) return 0;
     const contextMap: Record<string, RollContext[]> = {
@@ -277,4 +300,9 @@ export function getTraitBonus(traitKey: string, stat: StatName, context?: RollCo
   }
 
   return trait.mechanical.bonus || 0;
+}
+
+// Helper to check if a twist is active
+export function getActiveTwist(statusEffects: StatusEffect[]): StatusEffect | null {
+  return statusEffects.find(e => e.key === 'TWIST' && e.active) || null;
 }

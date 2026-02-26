@@ -10,7 +10,7 @@ import { Stats, TRAITS } from '@/rules/types';
 import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
 import { fetchOrGenerateSection, CachedSection } from '@/lib/llmService';
-import { Book, Scroll, Home, Copy, Check, Loader2 } from 'lucide-react';
+import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const BookReader: React.FC = () => {
@@ -31,6 +31,7 @@ const BookReader: React.FC = () => {
   const [showCharCreate, setShowCharCreate] = useState(false);
   const [showCodex, setShowCodex] = useState(false);
   const [showRumors, setShowRumors] = useState(false);
+  const [showClues, setShowClues] = useState(false);
   const [seed, setSeed] = useState('');
   const [isSharedReplay, setIsSharedReplay] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -66,7 +67,6 @@ const BookReader: React.FC = () => {
       setCachedNarration(null);
       return;
     }
-    // Only attempt LLM narration if the section text is empty/stub
     if (currentSection.narrator_text && currentSection.narrator_text.length > 50) {
       setCachedNarration(null);
       return;
@@ -130,6 +130,8 @@ const BookReader: React.FC = () => {
   const canUseTrait = gameState?.trait_key === 'deaths_jest' && !hasUsedTraitAbility(gameState, 'deaths_jest')
     ? { key: 'deaths_jest', name: "Death's Jest" }
     : null;
+
+  const playerClues = gameState?.inventory.filter(i => i.is_clue) || [];
 
   if (loading) {
     return (
@@ -197,7 +199,6 @@ const BookReader: React.FC = () => {
               className="w-12 bg-muted/30 border border-border rounded px-2 py-1 text-xs text-foreground text-center placeholder:text-muted-foreground"
             />
           </div>
-          {/* AI Art toggle */}
           <button
             onClick={toggleAiArt}
             className={`text-xs px-2 py-1 rounded border font-display transition-colors ${
@@ -207,6 +208,12 @@ const BookReader: React.FC = () => {
           >
             🎨
           </button>
+          {playerClues.length > 0 && (
+            <button onClick={() => setShowClues(true)} className="text-muted-foreground hover:text-gold transition-colors relative" title="Clues">
+              <Lightbulb size={18} />
+              <span className="absolute -top-1 -right-1 bg-gold text-background text-[9px] rounded-full w-3.5 h-3.5 flex items-center justify-center font-display">{playerClues.length}</span>
+            </button>
+          )}
           <button onClick={() => setShowCodex(true)} className="text-muted-foreground hover:text-gold transition-colors" title="Codex">
             <Book size={18} />
           </button>
@@ -258,6 +265,7 @@ const BookReader: React.FC = () => {
       {/* Bookmark panels */}
       <BookmarkPanel type="codex" visible={showCodex} onClose={() => setShowCodex(false)} />
       <BookmarkPanel type="rumors" visible={showRumors} onClose={() => setShowRumors(false)} />
+      <BookmarkPanel type="clues" visible={showClues} onClose={() => setShowClues(false)} clues={playerClues} />
     </div>
   );
 };
