@@ -158,6 +158,27 @@
     50% { transform: rotate(180deg) scale(1.2); }
     100% { transform: rotate(360deg) scale(1); opacity: 1; }
   }
+
+  .animate-ink-stamp {
+    animation: inkStamp 1s ease-out forwards;
+  }
+
+  @keyframes inkStamp {
+    0% { opacity: 0; transform: scale(1.5) rotate(-8deg); }
+    30% { opacity: 1; transform: scale(1) rotate(0deg); }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .animate-proclamation {
+    animation: proclamation 0.6s ease-out forwards;
+  }
+
+  @keyframes proclamation {
+    0% { opacity: 0; transform: translateY(-20px) scaleY(0); }
+    50% { transform: translateY(0) scaleY(1.05); }
+    100% { opacity: 1; transform: translateY(0) scaleY(1); }
+  }
 }
 
 /* Scrollbar styling */

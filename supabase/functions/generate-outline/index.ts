@@ -21,7 +21,7 @@ OUTPUT JSON:
     // exactly 6 factions. MUST include: House Vael, The Pallid Ministry, Iron Saints, The Echo Vault keepers, The Grey Protocol, and one unique faction
   ],
   "recurring_npcs": [
-    {"name": "string", "role": "string", "voice_tick": "speech quirk or mannerism", "secret": "hidden motivation"},
+    {"name": "string", "role": "string", "voice_tick": "speech quirk or mannerism", "tell": "physical or behavioral tell", "secret": "hidden motivation"},
     // exactly 5 NPCs
   ],
   "signature_places": [
@@ -90,6 +90,8 @@ WORLD BIBLE USAGE:
 - Every section MUST reference at least one world_bible element in location_tag or outline_summary
 - At least 40% of sections must reference a faction OR recurring NPC
 - Names must be consistent — reuse world_bible names, don't invent new ones
+- Each section MAY include "npc_mentions": ["NPC Name"] for NPCs present in that section
+- Each recurring NPC should appear in at least 6 sections total across the outline
 
 OUTPUT the outline as a single JSON object:
 {

@@ -60,6 +60,9 @@ export interface CachedSection {
   plate_caption: string | null;
   plate_prompt: string | null;
   plate_url: string | null;
+  beat_tag?: string;
+  device_tag?: string;
+  npc_mentions?: string[];
 }
 
 export async function fetchOrGenerateSection(
@@ -84,6 +87,9 @@ export async function fetchOrGenerateSection(
         plate_caption: (cached as any).plate_caption,
         plate_prompt: (cached as any).plate_prompt,
         plate_url: (cached as any).plate_url,
+        beat_tag: (cached as any).beat_tag,
+        device_tag: (cached as any).device_tag,
+        npc_mentions: (cached as any).npc_mentions,
       };
     }
 
@@ -91,8 +97,23 @@ export async function fetchOrGenerateSection(
       return null;
     }
 
+    // Fetch last 2 cached narrations for anti-repetition
+    const { data: recentCached } = await supabase
+      .from('run_sections_cache')
+      .select('narrator_text')
+      .eq('run_id', runId)
+      .order('created_at', { ascending: false })
+      .limit(2);
+    const recentNarrations = (recentCached || []).map((r: any) => r.narrator_text).filter(Boolean);
+
     // Build snapshot with world bible context
     const worldBible = outline.world_bible;
+    
+    // Determine NPC mentions for this section from outline (if available)
+    const outlineRaw = outline as any;
+    const rawSection = outlineRaw?.sections_raw?.find?.((s: any) => s.section_number === section.section_number);
+    const npcMentions = rawSection?.npc_mentions || [];
+
     const snapshot = {
       section_number: section.section_number,
       outline_summary: section.title,
@@ -119,6 +140,8 @@ export async function fetchOrGenerateSection(
       inventory_tags: gameState.inventory.map(i => i.tags).flat(),
       clues: gameState.inventory.filter(i => i.is_clue).map(i => i.name),
       active_twist: gameState.status_effects.find(e => e.key === 'TWIST' && e.active)?.type || null,
+      npc_mentions: npcMentions,
+      recent_narrations: recentNarrations,
       // Include world bible for narration consistency
       world_bible: worldBible ? {
         courts: worldBible.courts?.map(c => c.name) || [],
@@ -148,6 +171,9 @@ export async function fetchOrGenerateSection(
       plate_caption: data.plate_caption,
       plate_prompt: data.plate_prompt,
       plate_url: data.plate_url,
+      beat_tag: data.beat_tag,
+      device_tag: data.device_tag,
+      npc_mentions: data.npc_mentions,
     };
   } catch (e) {
     console.error('fetchOrGenerateSection error:', e);

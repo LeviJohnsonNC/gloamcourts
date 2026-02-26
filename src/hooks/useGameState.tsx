@@ -6,6 +6,7 @@ import { initCombat, resolveCombatRound, isCombatOver, changeStance } from '@/ru
 import { opposedRoll, simpleRoll, getPoolSize, getTargetNumber, rerollDice, countSuccesses, convertLowestDie } from '@/rules/dice';
 import { generateOutline as generateDemoOutline } from '@/generators/demoOutlineGenerator';
 import { generateLLMOutline } from '@/lib/llmService';
+import { generateEpitaph } from '@/lib/epitaphGenerator';
 import { toast } from '@/hooks/use-toast';
 
 export function useGameState() {
@@ -145,9 +146,15 @@ export function useGameState() {
     if (section.is_twist && section.twist_type) {
       const newState = activateTwist(state, section.twist_type);
       if (newState !== state) {
+        // Show proclamation-style toast
+        const proclamations: Record<string, string> = {
+          DebtWrit: 'BY DECREE OF THE COURTS: All expenditures of fortune shall henceforth incur… interest.',
+          GreyNotice: 'NOTICE FROM THE GREY PROTOCOL: Your darkness is now being audited. Additional consequences apply.',
+          HollowContract: 'THE HOLLOW CONTRACT IS SEALED: Your clarity costs double. But oh, how clear things become.',
+        };
         toast({
-          title: '⚡ Something has changed...',
-          description: `The rules of the Courts have shifted. ${section.twist_type === 'DebtWrit' ? 'Your luck now has paperwork attached.' : section.twist_type === 'GreyNotice' ? 'The Grey Protocol is watching.' : 'Your focus comes at a steeper price.'}`,
+          title: '⚡ PROCLAMATION',
+          description: proclamations[section.twist_type] || 'The rules have changed. The Courts send their regards.',
         });
       }
       return newState;
@@ -163,6 +170,7 @@ export function useGameState() {
     if (choice.type === 'free') {
       if (choice.item_gain) {
         newState = { ...newState, inventory: [...newState.inventory, choice.item_gain] };
+        if (choice.item_gain.is_clue) notifyClueGain(choice.item_gain.name);
       }
       if (choice.resource_change) {
         newState = applyResourceChange(newState, choice.resource_change);
@@ -213,6 +221,7 @@ export function useGameState() {
 
       if (choice.item_gain && success) {
         newState = { ...newState, inventory: [...newState.inventory, choice.item_gain] };
+        if (choice.item_gain.is_clue) notifyClueGain(choice.item_gain.name);
       }
       if (choice.resource_change) {
         newState = applyResourceChange(newState, choice.resource_change);
@@ -315,7 +324,13 @@ export function useGameState() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { error } = await supabase.from('codex_unlocks').upsert({ user_id: user.id, codex_key: codexKey });
-    if (error) console.error('Failed to unlock codex:', error);
+    if (error) {
+      console.error('Failed to unlock codex:', error);
+      return;
+    }
+    // Fetch codex title for toast
+    const { data: entry } = await supabase.from('codex_entries').select('title').eq('codex_key', codexKey).maybeSingle();
+    toast({ title: '📖 Codex Updated', description: entry?.title || codexKey.replace(/_/g, ' ') });
   };
 
   const unlockRumor = async (rumorKey: string) => {
@@ -323,6 +338,10 @@ export function useGameState() {
     if (!user) return;
     const { error } = await supabase.from('user_rumors').upsert({ user_id: user.id, rumor_key: rumorKey, level: 1 });
     if (error) console.error('Failed to unlock rumor:', error);
+  };
+
+  const notifyClueGain = (itemName: string) => {
+    toast({ title: '🔍 New Clue Logged', description: itemName });
   };
 
   const grantDeathRumor = async () => {
@@ -350,12 +369,29 @@ export function useGameState() {
   const recordDeath = async (section: number, cause: string, epitaph: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !gameState) return;
+
+    // Generate deterministic epitaph using template system
+    const currentSec = outline?.sections.find(s => s.section_number === section);
+    const worldBible = outline?.world_bible;
+    const activeTwist = gameState.status_effects.find(e => e.key === 'TWIST' && e.active);
+    const finalEpitaph = generateEpitaph(
+      outline?.seed || gameState.run_id,
+      section,
+      {
+        place: currentSec?.title || 'the Gloam Courts',
+        faction: worldBible?.factions?.[0]?.name || 'the Pallid Ministry',
+        itemName: gameState.inventory.length > 0 ? gameState.inventory[gameState.inventory.length - 1].name : undefined,
+        twistName: activeTwist?.name,
+        cause: cause.replace(/_/g, ' '),
+      }
+    );
+
     const { error } = await supabase.from('deaths').insert({
       user_id: user.id,
       run_id: gameState.run_id,
       section,
       cause,
-      epitaph,
+      epitaph: finalEpitaph,
     });
     if (error) console.error('Failed to record death:', error);
     await supabase.from('runs').update({ is_complete: true }).eq('id', gameState.run_id);
