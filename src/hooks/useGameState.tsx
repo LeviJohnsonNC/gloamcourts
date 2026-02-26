@@ -4,7 +4,8 @@ import { GameState, Section, AdventureOutline, Choice, Stats, CombatState, Comba
 import { createInitialGameState, serializeGameState, deserializeGameState, navigateToSection, applyResourceChange, applyTrackChange, isPlayerDead, embraceDarkness, useTraitAbility, hasUsedTraitAbility } from '@/rules/engine';
 import { initCombat, resolveCombatRound, isCombatOver, changeStance } from '@/rules/combat';
 import { opposedRoll, simpleRoll, getPoolSize, getTargetNumber, rerollDice, countSuccesses, convertLowestDie } from '@/rules/dice';
-import { generateOutline } from '@/generators/demoOutlineGenerator';
+import { generateOutline as generateDemoOutline } from '@/generators/demoOutlineGenerator';
+import { generateLLMOutline } from '@/lib/llmService';
 import { toast } from '@/hooks/use-toast';
 
 export function useGameState() {
@@ -16,12 +17,28 @@ export function useGameState() {
   const [pendingChoice, setPendingChoice] = useState<Choice | null>(null);
   const [focusSpentThisRoll, setFocusSpentThisRoll] = useState(false);
   const [embraceBonusDice, setEmbraceBonusDice] = useState(0);
+  const [generatingOutline, setGeneratingOutline] = useState(false);
 
   const currentSection = outline?.sections.find(s => s.section_number === gameState?.current_section) || null;
 
   const createNewRun = useCallback(async (userId: string, seed: string, stats: Stats, traitKey: string, characterDescription: string, isSharedReplay: boolean = false) => {
-    const adventure = generateOutline(seed);
+    setGeneratingOutline(true);
+
+    // Try LLM outline first, fall back to demo
+    let adventure: AdventureOutline | null = null;
+    try {
+      adventure = await generateLLMOutline(seed);
+    } catch (e) {
+      console.error('LLM outline failed:', e);
+    }
+
+    if (!adventure) {
+      adventure = generateDemoOutline(seed);
+      toast({ title: 'The Courts are silent', description: "You'll get the ink-and-paper version this time." });
+    }
+
     setOutline(adventure);
+    setGeneratingOutline(false);
 
     const title = isSharedReplay ? `Replay: ${adventure.title}` : adventure.title;
 
@@ -166,9 +183,7 @@ export function useGameState() {
       setShowDiceTray(true);
       setPendingChoice(choice);
 
-      // Apply embrace darkness track change if used
       if (embraceBonusDice > 0) {
-        // Track was already applied before rolling
         setEmbraceBonusDice(0);
       }
       setFocusSpentThisRoll(false);
@@ -272,23 +287,16 @@ export function useGameState() {
   const grantDeathRumor = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    
-    // Get all rumors
     const { data: allRumors } = await supabase.from('rumors_catalog').select('rumor_key');
     const { data: userRumors } = await supabase.from('user_rumors').select('rumor_key, level').eq('user_id', user.id);
-    
     if (!allRumors) return;
-    
     const ownedKeys = new Set((userRumors || []).map(r => r.rumor_key));
     const unowned = allRumors.filter(r => !ownedKeys.has(r.rumor_key));
-    
     if (unowned.length > 0) {
-      // Grant a new rumor
       const pick = unowned[Math.floor(Math.random() * unowned.length)];
       await supabase.from('user_rumors').upsert({ user_id: user.id, rumor_key: pick.rumor_key, level: 1 });
       toast({ title: 'Rumor Gained', description: `Death whispers secrets. You learned something new.` });
     } else if (userRumors && userRumors.length > 0) {
-      // Level up a random owned rumor (max 3)
       const upgradeable = userRumors.filter(r => r.level < 3);
       if (upgradeable.length > 0) {
         const pick = upgradeable[Math.floor(Math.random() * upgradeable.length)];
@@ -310,8 +318,6 @@ export function useGameState() {
     });
     if (error) console.error('Failed to record death:', error);
     await supabase.from('runs').update({ is_complete: true }).eq('id', gameState.run_id);
-    
-    // Grant a rumor on death
     await grantDeathRumor();
   };
 
@@ -412,44 +418,17 @@ export function useGameState() {
     const newState = useTraitAbility(gameState, 'deaths_jest');
     setGameState(newState);
     await autosave(newState);
-    toast({ title: "Death's Jest", description: 'A die showing 1 has become a 10. Death laughs.' });
+    toast({ title: "Death's Jest!", description: 'A 1 becomes a 10. Death laughs with you, this once.' });
   }, [gameState, lastRoll, autosave]);
 
-  const checkTrueEndingEligibility = useCallback(async (): Promise<boolean> => {
-    if (!outline?.required_codex_keys || outline.required_codex_keys.length === 0) return true;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return false;
-
-    const { data: unlocks } = await supabase.from('codex_unlocks').select('codex_key').eq('user_id', user.id);
-    const unlockedKeys = new Set((unlocks || []).map(u => u.codex_key));
-    return outline.required_codex_keys.every(k => unlockedKeys.has(k));
-  }, [outline]);
-
   return {
-    gameState,
-    setGameState,
-    outline,
-    currentSection,
-    combatState,
-    lastRoll,
-    showDiceTray,
-    setShowDiceTray,
-    pendingChoice,
-    focusSpentThisRoll,
-    embraceBonusDice,
-    createNewRun,
-    loadRun,
-    loadLatestRun,
-    makeChoice,
-    doCombatAction,
-    changeCombatStance,
-    recordDeath,
-    completeRun,
-    spendLuckReroll,
-    spendFocusReduceTn,
-    doEmbraceDarkness,
-    useDeathsJest,
-    goToSection,
-    checkTrueEndingEligibility,
+    gameState, outline, currentSection, combatState,
+    lastRoll, showDiceTray, setShowDiceTray,
+    focusSpentThisRoll, embraceBonusDice,
+    generatingOutline,
+    createNewRun, loadRun, loadLatestRun, makeChoice, doCombatAction,
+    changeCombatStance, recordDeath, completeRun,
+    spendLuckReroll, spendFocusReduceTn, doEmbraceDarkness,
+    useDeathsJest, goToSection,
   };
 }

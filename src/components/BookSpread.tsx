@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Section, Choice, GameState, CombatState, Stance, CombatAction, RangeBand } from '@/rules/types';
 import { canMakeGatedChoice } from '@/rules/engine';
 import InkPlate from './InkPlate';
-import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame } from 'lucide-react';
+import { CachedSection } from '@/lib/llmService';
+import { generatePlate } from '@/lib/llmService';
+import { Shield, Sword, Zap, ArrowRight, Lock, Heart, Brain, Clover, Skull, Home, ArrowUp, ArrowDown, BookOpen, Flame, Loader2 } from 'lucide-react';
 
 interface BookSpreadProps {
   section: Section;
@@ -21,19 +23,48 @@ interface BookSpreadProps {
   onSpendFocus?: () => void;
   embraceBonusDice?: number;
   endingDetails?: { ending_key: string; is_true_ending: boolean };
+  cachedNarration?: CachedSection | null;
+  loadingNarration?: boolean;
+  aiArtEnabled?: boolean;
+  runId?: string;
 }
 
 const BookSpread: React.FC<BookSpreadProps> = ({
   section, gameState, combatState, onChoice, onCombatAction, onChangeCombatStance, onDeath, onEnding,
   onNewRun, onReturnHome, onEmbraceDarkness, focusSpent, onSpendFocus, embraceBonusDice = 0, endingDetails,
+  cachedNarration, loadingNarration, aiArtEnabled, runId,
 }) => {
   const isDead = section.is_death || gameState.resources.health <= 0;
   const isEnding = section.is_ending;
+  const [generatingPlate, setGeneratingPlate] = useState(false);
+  const [plateUrl, setPlateUrl] = useState<string | null>(cachedNarration?.plate_url || null);
 
   React.useEffect(() => {
     if (isDead) onDeath();
     if (isEnding) onEnding();
   }, [isDead, isEnding]);
+
+  // Reset plate URL when section changes
+  React.useEffect(() => {
+    setPlateUrl(cachedNarration?.plate_url || null);
+  }, [cachedNarration?.plate_url, section.section_number]);
+
+  const displayTitle = cachedNarration?.title || section.title;
+  const displayText = cachedNarration?.narrator_text || section.narrator_text;
+  const plateCaption = cachedNarration?.plate_caption || section.plate_caption;
+
+  const handleGeneratePlate = async () => {
+    if (!runId || generatingPlate) return;
+    setGeneratingPlate(true);
+    const url = await generatePlate(
+      runId,
+      section.section_number,
+      cachedNarration?.plate_prompt || undefined,
+      plateCaption || section.title,
+    );
+    if (url) setPlateUrl(url);
+    setGeneratingPlate(false);
+  };
 
   return (
     <motion.div
@@ -48,15 +79,57 @@ const BookSpread: React.FC<BookSpreadProps> = ({
         {/* Section number */}
         <div className="text-center mb-6">
           <span className="section-number text-3xl">{section.section_number}</span>
-          <h2 className="font-display text-lg text-foreground mt-1">{section.title}</h2>
+          <h2 className="font-display text-lg text-foreground mt-1">{displayTitle}</h2>
         </div>
 
         {/* Plate */}
-        {section.has_plate && <InkPlate caption={section.plate_caption} />}
+        {section.has_plate && (
+          <div className="my-6">
+            {plateUrl ? (
+              <div className="flex flex-col items-center">
+                <img
+                  src={plateUrl}
+                  alt={plateCaption || 'Ink plate illustration'}
+                  className="w-full max-w-md rounded border border-gold-dim"
+                  loading="lazy"
+                />
+                {plateCaption && <p className="mt-2 text-sm text-muted-foreground italic font-narrative text-center">{plateCaption}</p>}
+              </div>
+            ) : (
+              <div>
+                <InkPlate caption={plateCaption || undefined} />
+                {aiArtEnabled && !generatingPlate && (
+                  <div className="text-center mt-2">
+                    <button
+                      onClick={handleGeneratePlate}
+                      className="text-xs text-gold-dim hover:text-gold font-display border border-gold-dim/30 rounded px-3 py-1 hover:bg-gold/5 transition-colors"
+                    >
+                      🎨 Generate Plate
+                    </button>
+                  </div>
+                )}
+                {generatingPlate && (
+                  <div className="text-center mt-2 flex items-center justify-center gap-2">
+                    <Loader2 size={12} className="animate-spin text-gold" />
+                    <span className="text-xs text-muted-foreground font-display">Illustrating…</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Loading narration indicator */}
+        {loadingNarration && (
+          <div className="flex items-center gap-2 mb-4">
+            <Loader2 size={14} className="animate-spin text-gold" />
+            <span className="text-xs text-muted-foreground font-display">The Narrator composes…</span>
+          </div>
+        )}
 
         {/* Narrator text */}
         <div className="text-narrative text-foreground whitespace-pre-line mb-8">
-          {section.narrator_text}
+          {displayText}
         </div>
 
         {/* Death */}
@@ -126,7 +199,6 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               <span>Range: {combatState.player_range}</span>
             </div>
 
-            {/* Stance buttons */}
             <div className="flex gap-2 mb-3">
               {(['Aggressive', 'Guarded', 'Cunning'] as Stance[]).map(s => (
                 <button
@@ -143,7 +215,6 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               ))}
             </div>
 
-            {/* Action buttons */}
             <div className="grid grid-cols-3 gap-2">
               <button onClick={() => onCombatAction('attack')} className="flex items-center gap-2 px-3 py-2 rounded border border-destructive/50 text-destructive hover:bg-destructive/10 text-sm font-display">
                 <Sword size={14} /> Attack
@@ -165,7 +236,6 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               </button>
             </div>
 
-            {/* Combat log */}
             {combatState.log.length > 0 && (
               <div className="mt-3 max-h-32 overflow-y-auto text-xs text-muted-foreground font-narrative space-y-1">
                 {combatState.log.slice(-5).map((l, i) => <p key={i}>{l}</p>)}
@@ -174,7 +244,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           </div>
         )}
 
-        {/* Pre-roll tools: Embrace Darkness & Focus */}
+        {/* Pre-roll tools */}
         {!combatState && !isDead && !isEnding && section.choices.some(c => c.type === 'test') && (
           <div className="mt-6 border border-border/50 rounded p-3 bg-muted/10">
             <p className="text-xs text-muted-foreground font-display tracking-wider uppercase mb-2">Before you roll...</p>
@@ -206,6 +276,8 @@ const BookSpread: React.FC<BookSpreadProps> = ({
             <h3 className="font-display text-xs tracking-widest text-gold-dim uppercase">What do you do?</h3>
             {section.choices.map((choice, i) => {
               const gated = choice.type === 'gated' && !canMakeGatedChoice(gameState, choice);
+              const flavorKey = `choice_${i}`;
+              const flavor = cachedNarration?.choice_flavor?.[flavorKey];
               return (
                 <button
                   key={i}
@@ -229,6 +301,9 @@ const BookSpread: React.FC<BookSpreadProps> = ({
                       )}
                       {choice.stakes && (
                         <p className="text-xs text-muted-foreground mt-1 italic">{choice.stakes}</p>
+                      )}
+                      {flavor && (
+                        <p className="text-xs text-gold-dim/70 mt-0.5 italic">{flavor}</p>
                       )}
                     </div>
                   </div>

@@ -9,7 +9,8 @@ import CharacterCreation from '@/components/CharacterCreation';
 import { Stats, TRAITS } from '@/rules/types';
 import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
-import { Book, Scroll, Home, Copy, Check } from 'lucide-react';
+import { fetchOrGenerateSection, CachedSection } from '@/lib/llmService';
+import { Book, Scroll, Home, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const BookReader: React.FC = () => {
@@ -20,6 +21,7 @@ const BookReader: React.FC = () => {
     gameState, outline, currentSection, combatState,
     lastRoll, showDiceTray, setShowDiceTray,
     focusSpentThisRoll, embraceBonusDice,
+    generatingOutline,
     createNewRun, loadRun, makeChoice, doCombatAction,
     changeCombatStance, recordDeath, completeRun,
     spendLuckReroll, spendFocusReduceTn, doEmbraceDarkness,
@@ -34,6 +36,11 @@ const BookReader: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [sectionInput, setSectionInput] = useState('');
   const [copied, setCopied] = useState(false);
+  const [cachedNarration, setCachedNarration] = useState<CachedSection | null>(null);
+  const [loadingNarration, setLoadingNarration] = useState(false);
+  const [aiArtEnabled, setAiArtEnabled] = useState(() => {
+    return localStorage.getItem('gloam_ai_art') === 'true';
+  });
 
   useEffect(() => {
     if (!user) { navigate('/auth'); return; }
@@ -52,6 +59,26 @@ const BookReader: React.FC = () => {
       loadRun(runId).then(() => setLoading(false));
     }
   }, [runId, user]);
+
+  // Fetch/generate narration when section changes
+  useEffect(() => {
+    if (!currentSection || !gameState || !outline) {
+      setCachedNarration(null);
+      return;
+    }
+    // Only attempt LLM narration if the section text is empty/stub
+    if (currentSection.narrator_text && currentSection.narrator_text.length > 50) {
+      setCachedNarration(null);
+      return;
+    }
+    setLoadingNarration(true);
+    fetchOrGenerateSection(gameState.run_id, currentSection, gameState, outline)
+      .then(result => {
+        setCachedNarration(result);
+        setLoadingNarration(false);
+      })
+      .catch(() => setLoadingNarration(false));
+  }, [currentSection?.section_number, gameState?.run_id]);
 
   const handleCharCreate = async (stats: Stats, traitKey: string, description: string) => {
     if (!user) return;
@@ -94,6 +121,12 @@ const BookReader: React.FC = () => {
     }
   };
 
+  const toggleAiArt = () => {
+    const next = !aiArtEnabled;
+    setAiArtEnabled(next);
+    localStorage.setItem('gloam_ai_art', String(next));
+  };
+
   const canUseTrait = gameState?.trait_key === 'deaths_jest' && !hasUsedTraitAbility(gameState, 'deaths_jest')
     ? { key: 'deaths_jest', name: "Death's Jest" }
     : null;
@@ -102,6 +135,16 @@ const BookReader: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <p className="font-display text-gold animate-pulse">Loading...</p>
+      </div>
+    );
+  }
+
+  if (generatingOutline) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
+        <Loader2 className="animate-spin text-gold" size={32} />
+        <p className="font-display text-gold tracking-wider">Summoning the Author…</p>
+        <p className="text-xs text-muted-foreground font-narrative">Seed: {seed}</p>
       </div>
     );
   }
@@ -135,7 +178,6 @@ const BookReader: React.FC = () => {
           <h1 className="font-display text-sm text-gold tracking-wider">{outline?.title}</h1>
         </div>
         <div className="flex items-center gap-2">
-          {/* Run Code */}
           {outline?.seed && (
             <button
               onClick={handleCopySeed}
@@ -155,6 +197,16 @@ const BookReader: React.FC = () => {
               className="w-12 bg-muted/30 border border-border rounded px-2 py-1 text-xs text-foreground text-center placeholder:text-muted-foreground"
             />
           </div>
+          {/* AI Art toggle */}
+          <button
+            onClick={toggleAiArt}
+            className={`text-xs px-2 py-1 rounded border font-display transition-colors ${
+              aiArtEnabled ? 'border-gold bg-gold/10 text-gold' : 'border-border text-muted-foreground'
+            }`}
+            title="Toggle AI art plates"
+          >
+            🎨
+          </button>
           <button onClick={() => setShowCodex(true)} className="text-muted-foreground hover:text-gold transition-colors" title="Codex">
             <Book size={18} />
           </button>
@@ -182,6 +234,10 @@ const BookReader: React.FC = () => {
           onSpendFocus={spendFocusReduceTn}
           embraceBonusDice={embraceBonusDice}
           endingDetails={endingDetails}
+          cachedNarration={cachedNarration}
+          loadingNarration={loadingNarration}
+          aiArtEnabled={aiArtEnabled}
+          runId={gameState.run_id}
         />
       </main>
 
