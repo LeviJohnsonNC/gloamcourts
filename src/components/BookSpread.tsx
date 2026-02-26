@@ -225,19 +225,19 @@ const BookSpread: React.FC<BookSpreadProps> = ({
             <h3 className="font-display text-sm text-destructive tracking-wider uppercase mb-3">
               ⚔ Combat: {combatState.enemy.name}
             </h3>
-            <div className="flex gap-4 text-xs text-muted-foreground mb-3">
+            <div className="grid grid-cols-2 gap-1 sm:flex sm:gap-4 text-xs text-muted-foreground mb-3">
               <span>Enemy HP: {combatState.enemy_health}/{combatState.enemy.health}</span>
               <span>Round: {combatState.round}</span>
               <span>Stance: {combatState.player_stance}</span>
               <span>Range: {combatState.player_range}</span>
             </div>
 
-            <div className="flex gap-2 mb-3">
+            <div className="flex flex-wrap gap-2 mb-3">
               {(['Aggressive', 'Guarded', 'Cunning'] as Stance[]).map(s => (
                 <button
                   key={s}
                   onClick={() => onChangeCombatStance(s)}
-                  className={`text-xs px-3 py-1 rounded border font-display ${
+                  className={`text-xs px-3 py-2 rounded border font-display touch-manipulation ${
                     combatState.player_stance === s
                       ? 'border-gold bg-gold/10 text-gold'
                       : 'border-border text-muted-foreground hover:text-foreground'
@@ -248,23 +248,23 @@ const BookSpread: React.FC<BookSpreadProps> = ({
               ))}
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <button onClick={() => onCombatAction('attack')} className="flex items-center gap-2 px-3 py-2 rounded border border-destructive/50 text-destructive hover:bg-destructive/10 text-sm font-display">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <button onClick={() => onCombatAction('attack')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-destructive/50 text-destructive hover:bg-destructive/10 text-sm font-display touch-manipulation">
                 <Sword size={14} /> Attack
               </button>
-              <button onClick={() => onCombatAction('defend')} className="flex items-center gap-2 px-3 py-2 rounded border border-gold-dim text-foreground hover:bg-gold/10 text-sm font-display">
+              <button onClick={() => onCombatAction('defend')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-gold-dim text-foreground hover:bg-gold/10 text-sm font-display touch-manipulation">
                 <Shield size={14} /> Defend
               </button>
-              <button onClick={() => onCombatAction('trick')} className="flex items-center gap-2 px-3 py-2 rounded border border-accent/50 text-accent hover:bg-accent/10 text-sm font-display">
+              <button onClick={() => onCombatAction('trick')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-accent/50 text-accent hover:bg-accent/10 text-sm font-display touch-manipulation">
                 <Zap size={14} /> Trick
               </button>
-              <button onClick={() => onCombatAction('advance')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
+              <button onClick={() => onCombatAction('advance')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display touch-manipulation">
                 <ArrowUp size={14} /> Advance
               </button>
-              <button onClick={() => onCombatAction('withdraw')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
+              <button onClick={() => onCombatAction('withdraw')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display touch-manipulation">
                 <ArrowDown size={14} /> Withdraw
               </button>
-              <button onClick={() => onCombatAction('flee')} className="flex items-center gap-2 px-3 py-2 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display">
+              <button onClick={() => onCombatAction('flee')} className="flex items-center gap-2 px-3 py-2.5 rounded border border-border text-muted-foreground hover:text-foreground text-sm font-display touch-manipulation">
                 <ArrowRight size={14} /> Flee
               </button>
             </div>
@@ -281,23 +281,25 @@ const BookSpread: React.FC<BookSpreadProps> = ({
         {!combatState && !isDead && !isEnding && section.choices.some(c => c.type === 'test') && (
           <div className="mt-6 border border-border/50 rounded p-3 bg-muted/10">
             <p className="text-xs text-muted-foreground font-display tracking-wider uppercase mb-2">Before you roll...</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               {gameState.resources.focus >= focusCost && !focusSpent && onSpendFocus && (
-                <button onClick={onSpendFocus} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
+                <button onClick={onSpendFocus} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
                   <Brain size={12} className="text-hex" /> Spend {focusCost} Focus (-{focusTnReduction} TN)
                 </button>
               )}
-              {focusSpent && <span className="text-xs text-gold font-display">Focus spent: TN -{focusTnReduction} ✓</span>}
-              {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display">Darkness embraced: +{embraceBonusDice} dice ✓</span>}
+              {focusSpent && <span className="text-xs text-gold font-display py-2">Focus spent: TN -{focusTnReduction} ✓</span>}
+              {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display py-2">Darkness embraced: +{embraceBonusDice} dice ✓</span>}
               {embraceBonusDice === 0 && onEmbraceDarkness && (
                 <>
-                  <button onClick={() => onEmbraceDarkness('madness')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
-                    <Skull size={12} className="text-madness" /> Embrace Madness (+2 dice, +1 Mad)
-                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive ml-1">⚡+1 Mad, Marked</span>}
+                  <button onClick={() => onEmbraceDarkness('madness')} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
+                    <Skull size={12} className="text-madness" />
+                    <span>Embrace Madness (+2 dice, +1 Mad)</span>
+                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡+1 Mad</span>}
                   </button>
-                  <button onClick={() => onEmbraceDarkness('taint')} className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors">
-                    <Skull size={12} className="text-taint" /> Embrace Taint (+2 dice, +1 Taint)
-                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive ml-1">⚡+1 Mad, Marked</span>}
+                  <button onClick={() => onEmbraceDarkness('taint')} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
+                    <Skull size={12} className="text-taint" />
+                    <span>Embrace Taint (+2 dice, +1 Taint)</span>
+                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡+1 Mad</span>}
                   </button>
                 </>
               )}
@@ -361,7 +363,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
       </div>
 
       {/* Status bar */}
-      <div className="mt-4 flex flex-wrap gap-3 justify-center text-xs font-display">
+      <div className="mt-4 flex flex-wrap gap-x-3 gap-y-1 justify-center text-xs font-display pb-[env(safe-area-inset-bottom)]">
         <span className="flex items-center gap-1 text-destructive"><Heart size={12} /> {gameState.resources.health}/10</span>
         <span className="flex items-center gap-1 text-hex"><Brain size={12} /> {gameState.resources.focus}/6</span>
         <span className="flex items-center gap-1 text-gold"><Clover size={12} /> {gameState.resources.luck}/6</span>
