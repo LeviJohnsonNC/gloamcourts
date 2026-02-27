@@ -210,7 +210,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-flash-lite",
         messages: [
           { role: "system", content: WORLD_BIBLE_PROMPT },
           { role: "user", content: `Generate a World Bible for adventure seed: "${seed}". Output ONLY the JSON object.` },

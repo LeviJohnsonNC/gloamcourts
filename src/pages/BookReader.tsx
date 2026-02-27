@@ -23,7 +23,7 @@ const BookReader: React.FC = () => {
     gameState, outline, currentSection, combatState,
     lastRoll, showDiceTray, setShowDiceTray,
     focusSpentThisRoll, embraceBonusDice,
-    generatingOutline,
+    generatingOutline, outlineStage,
     createNewRun, loadRun, makeChoice, doCombatAction,
     changeCombatStance, recordDeath, completeRun,
     spendLuckReroll, spendFocusReduceTn, doEmbraceDarkness,
@@ -148,7 +148,7 @@ const BookReader: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
         <Loader2 className="animate-spin text-gold" size={32} />
-        <p className="font-display text-gold tracking-wider">Summoning the Author…</p>
+        <p className="font-display text-gold tracking-wider">{outlineStage}</p>
         <p className="text-xs text-muted-foreground font-narrative">Seed: {seed}</p>
       </div>
     );
