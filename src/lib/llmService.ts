@@ -20,8 +20,10 @@ export async function generateLLMOutline(
   onStage?: (stage: string) => void,
 ): Promise<AdventureOutline | null> {
   try {
-    onStage?.('Weaving the world…');
+    onStage?.('summoning');
     const headers = await getAuthHeaders();
+
+    onStage?.('weaving');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
@@ -32,7 +34,7 @@ export async function generateLLMOutline(
     });
     clearTimeout(timeout);
 
-    onStage?.('Plotting your fate…');
+    onStage?.('plotting');
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ message: 'Unknown error' }));
@@ -43,6 +45,7 @@ export async function generateLLMOutline(
       return null;
     }
 
+    onStage?.('binding');
     const { outline: raw } = await resp.json();
     const result = validateAndConvertOutline(raw, seed);
 
@@ -56,6 +59,7 @@ export async function generateLLMOutline(
       console.warn('Outline warnings:', result.warnings);
     }
 
+    onStage?.('sealing');
     return result.outline;
   } catch (e) {
     console.error('generateLLMOutline error:', e);

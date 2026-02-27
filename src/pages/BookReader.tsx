@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useGameState } from '@/hooks/useGameState';
@@ -10,11 +10,109 @@ import { Stats, TRAITS } from '@/rules/types';
 import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
 import { fetchOrGenerateSection, CachedSection } from '@/lib/llmService';
-import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb, MoreVertical } from 'lucide-react';
+import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb, MoreVertical, CircleDot, Circle, CheckCircle2 } from 'lucide-react';
 import heroBg from '@/assets/hero-bg.png';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/use-toast';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Progress } from '@/components/ui/progress';
+
+const RITUAL_STEPS = [
+  { key: 'summoning', label: 'Summoning the Author', flavor: 'A quill scratches in the dark…' },
+  { key: 'weaving', label: 'Weaving the World', flavor: 'Ink bleeds into parchment…' },
+  { key: 'plotting', label: 'Plotting Your Fate', flavor: 'The threads of destiny pull taut…' },
+  { key: 'binding', label: 'Binding the Pages', flavor: 'Leather and bone, pressed together…' },
+  { key: 'sealing', label: 'Sealing the Cover', flavor: 'Wax drips. The seal is set.' },
+] as const;
+
+const LoadingRitual: React.FC<{ stage: string; seed: string }> = ({ stage, seed }) => {
+  const activeIndex = RITUAL_STEPS.findIndex(s => s.key === stage);
+  const progress = Math.max(0, ((activeIndex) / RITUAL_STEPS.length) * 100);
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-6">
+      <motion.h2
+        className="font-display text-gold text-lg sm:text-xl tracking-[0.2em] mb-10"
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6 }}
+      >
+        ✦ The Author Awakens ✦
+      </motion.h2>
+
+      <div className="w-full max-w-sm space-y-3">
+        {RITUAL_STEPS.map((step, i) => {
+          const status = i < activeIndex ? 'done' : i === activeIndex ? 'active' : 'pending';
+          return (
+            <AnimatePresence key={step.key}>
+              <motion.div
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.08, duration: 0.35 }}
+                className="flex items-start gap-3"
+              >
+                {/* Icon */}
+                <div className="mt-0.5 shrink-0">
+                  {status === 'done' && (
+                    <CheckCircle2 size={18} className="text-gold" />
+                  )}
+                  {status === 'active' && (
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1], opacity: [0.7, 1, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 1.8, ease: 'easeInOut' }}
+                    >
+                      <CircleDot size={18} className="text-blood" />
+                    </motion.div>
+                  )}
+                  {status === 'pending' && (
+                    <Circle size={18} className="text-muted-foreground/40" />
+                  )}
+                </div>
+
+                {/* Text */}
+                <div className="min-w-0">
+                  <p className={`font-display text-sm tracking-wide ${
+                    status === 'done' ? 'text-gold-dim line-through' :
+                    status === 'active' ? 'text-foreground' :
+                    'text-muted-foreground/50'
+                  }`}>
+                    {step.label}
+                  </p>
+                  {status === 'active' && (
+                    <motion.p
+                      className="font-narrative text-xs text-blood/80 italic mt-0.5"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.2 }}
+                    >
+                      {step.flavor}
+                    </motion.p>
+                  )}
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          );
+        })}
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full max-w-sm mt-8">
+        <Progress value={progress} className="h-1.5 bg-muted/30" />
+      </div>
+
+      {/* Seed */}
+      <motion.p
+        className="text-xs text-muted-foreground font-narrative mt-6 tracking-wide"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+      >
+        Seed: {seed}
+      </motion.p>
+    </div>
+  );
+};
 
 const BookReader: React.FC = () => {
   const { runId } = useParams<{ runId: string }>();
@@ -161,13 +259,7 @@ const BookReader: React.FC = () => {
   }
 
   if (generatingOutline) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4">
-        <Loader2 className="animate-spin text-gold" size={32} />
-        <p className="font-display text-gold tracking-wider">{outlineStage}</p>
-        <p className="text-xs text-muted-foreground font-narrative">Seed: {seed}</p>
-      </div>
-    );
+    return <LoadingRitual stage={outlineStage} seed={seed} />;
   }
 
   if (showCharCreate) {
