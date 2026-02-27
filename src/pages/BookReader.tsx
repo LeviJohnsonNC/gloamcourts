@@ -79,6 +79,25 @@ const BookReader: React.FC = () => {
       .catch(() => setLoadingNarration(false));
   }, [currentSection?.section_number, gameState?.run_id]);
 
+  // Prefetch next reachable sections while player reads
+  useEffect(() => {
+    if (!currentSection || !gameState || !outline || loadingNarration) return;
+
+    const targets = new Set<number>();
+    for (const c of currentSection.choices) {
+      if (c.next_section) targets.add(c.next_section);
+      if (c.success_section) targets.add(c.success_section);
+      if (c.fail_section) targets.add(c.fail_section);
+    }
+
+    targets.forEach(sn => {
+      const sec = outline.sections.find((s: any) => s.section_number === sn);
+      if (sec) {
+        fetchOrGenerateSection(gameState.run_id, sec, gameState, outline);
+      }
+    });
+  }, [currentSection?.section_number, loadingNarration]);
+
   const handleCharCreate = async (stats: Stats, traitKey: string, description: string) => {
     if (!user) return;
     const newRunId = await createNewRun(user.id, seed, stats, traitKey, description, isSharedReplay);
