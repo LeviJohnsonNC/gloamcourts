@@ -15,14 +15,20 @@ async function getAuthHeaders() {
   };
 }
 
-export async function generateLLMOutline(seed: string): Promise<AdventureOutline | null> {
+export async function generateLLMOutline(
+  seed: string,
+  onStage?: (stage: string) => void,
+): Promise<AdventureOutline | null> {
   try {
+    onStage?.('Weaving the world…');
     const headers = await getAuthHeaders();
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ seed }),
     });
+
+    onStage?.('Plotting your fate…');
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ message: 'Unknown error' }));
