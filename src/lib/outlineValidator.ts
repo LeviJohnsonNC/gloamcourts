@@ -316,7 +316,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
     title: raw.title,
     seed,
     sections,
-    start_section: raw.start_section,
+    start_section: 1, // Always start at section 1
     required_codex_keys: raw.required_codex_keys || ['the_pallid_ministry', 'the_echo_vault', 'the_grey_protocol', 'the_cinder_crown', 'the_pallid_seal'],
     world_bible: raw.world_bible || undefined,
   };
