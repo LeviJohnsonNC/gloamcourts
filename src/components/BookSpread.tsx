@@ -51,6 +51,13 @@ const BookSpread: React.FC<BookSpreadProps> = ({
     setPlateUrl(cachedNarration?.plate_url || null);
   }, [cachedNarration?.plate_url, section.section_number]);
 
+  // Auto-generate plate when AI art is enabled and section has a plate
+  React.useEffect(() => {
+    if (aiArtEnabled && section.has_plate && !plateUrl && !generatingPlate && runId) {
+      handleGeneratePlate();
+    }
+  }, [aiArtEnabled, section.section_number, plateUrl, runId]);
+
   const displayTitle = cachedNarration?.title || section.title;
   const displayText = cachedNarration?.narrator_text || section.narrator_text;
   const plateCaption = cachedNarration?.plate_caption || section.plate_caption;
