@@ -19,13 +19,13 @@ export function useGameState() {
   const [focusSpentThisRoll, setFocusSpentThisRoll] = useState(false);
   const [embraceBonusDice, setEmbraceBonusDice] = useState(0);
   const [generatingOutline, setGeneratingOutline] = useState(false);
-  const [outlineStage, setOutlineStage] = useState<string>('Summoning the Author…');
+  const [outlineStage, setOutlineStage] = useState<string>('summoning');
 
   const currentSection = outline?.sections.find(s => s.section_number === gameState?.current_section) || null;
 
   const createNewRun = useCallback(async (userId: string, seed: string, stats: Stats, traitKey: string, characterDescription: string, isSharedReplay: boolean = false) => {
     setGeneratingOutline(true);
-    setOutlineStage('Summoning the Author…');
+    setOutlineStage('summoning');
 
     let adventure: AdventureOutline | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -34,7 +34,7 @@ export function useGameState() {
         if (adventure) break;
       } catch (e) {
         console.error(`LLM outline attempt ${attempt + 1} failed:`, e);
-        if (attempt === 0) setOutlineStage('Retrying…');
+        if (attempt === 0) setOutlineStage('summoning');
       }
     }
 
