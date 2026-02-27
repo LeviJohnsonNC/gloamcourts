@@ -28,10 +28,14 @@ export function useGameState() {
     setOutlineStage('Summoning the Author…');
 
     let adventure: AdventureOutline | null = null;
-    try {
-      adventure = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
-    } catch (e) {
-      console.error('LLM outline failed:', e);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        adventure = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
+        if (adventure) break;
+      } catch (e) {
+        console.error(`LLM outline attempt ${attempt + 1} failed:`, e);
+        if (attempt === 0) setOutlineStage('Retrying…');
+      }
     }
 
     if (!adventure) {

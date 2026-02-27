@@ -22,11 +22,15 @@ export async function generateLLMOutline(
   try {
     onStage?.('Weaving the world…');
     const headers = await getAuthHeaders();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ seed }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
     onStage?.('Plotting your fate…');
 
@@ -99,9 +103,7 @@ export async function fetchOrGenerateSection(
       };
     }
 
-    if (section.narrator_text && section.narrator_text.length > 50 && !section.narrator_text.startsWith('stub')) {
-      return null;
-    }
+    // Always attempt to generate unique narration, even if outline has placeholder text
 
     // Fetch last 2 cached narrations for anti-repetition
     const { data: recentCached } = await supabase
