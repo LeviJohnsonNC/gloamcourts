@@ -97,7 +97,7 @@ OUTPUT the outline as a single JSON object:
 {
   "title": string,
   "seed": string,
-  "start_section": number,
+  "start_section": 1,  // MUST always be 1
   "required_codex_keys": string[],
   "world_bible": <the world bible object provided>,
   "sections": [

@@ -1,7 +1,7 @@
 import { AdventureOutline, Section, Choice, CombatEnemy, InventoryItem } from '@/rules/types';
 import { hashSeed, createRng } from '@/rules/dice';
 
-const SECTION_POOL = [3, 7, 12, 18, 24, 31, 38, 44, 51, 57, 63, 71, 78, 86, 93, 101, 108, 116, 127, 135, 143, 157, 171, 183, 190];
+const SECTION_POOL = [1, 3, 7, 12, 18, 24, 31, 38, 44, 51, 57, 63, 71, 78, 86, 93, 101, 108, 116, 127, 135, 143, 157, 171, 183, 190];
 
 const TITLES = [
   'The Invitation',
@@ -105,7 +105,10 @@ export function generateOutline(seed: string): AdventureOutline {
     [usedNumbers[i], usedNumbers[j]] = [usedNumbers[j], usedNumbers[i]];
   }
 
-  const startSection = usedNumbers[0];
+  // Ensure section 1 is always the start
+  const idx1 = usedNumbers.indexOf(1);
+  if (idx1 > 0) { [usedNumbers[0], usedNumbers[idx1]] = [usedNumbers[idx1], usedNumbers[0]]; }
+  const startSection = 1;
   const bossSection = usedNumbers[numSections - 2];
   const endingSection = usedNumbers[numSections - 1];
   // True ending section uses a number outside the pool

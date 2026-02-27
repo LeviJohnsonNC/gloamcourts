@@ -138,16 +138,6 @@ const BookSpread: React.FC<BookSpreadProps> = ({
             ) : (
               <div>
                 <InkPlate caption={plateCaption || undefined} />
-                {aiArtEnabled && !generatingPlate && (
-                  <div className="text-center mt-2">
-                    <button
-                      onClick={handleGeneratePlate}
-                      className="text-xs text-gold-dim hover:text-gold font-display border border-gold-dim/30 rounded px-3 py-1 hover:bg-gold/5 transition-colors"
-                    >
-                      🎨 Generate Plate
-                    </button>
-                  </div>
-                )}
                 {generatingPlate && (
                   <div className="text-center mt-2 flex items-center justify-center gap-2">
                     <Loader2 size={12} className="animate-spin text-gold" />
