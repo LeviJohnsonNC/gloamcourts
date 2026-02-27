@@ -43,7 +43,7 @@ const BookReader: React.FC = () => {
   const [cachedNarration, setCachedNarration] = useState<CachedSection | null>(null);
   const [loadingNarration, setLoadingNarration] = useState(false);
   const [aiArtEnabled, setAiArtEnabled] = useState(() => {
-    return localStorage.getItem('gloam_ai_art') === 'true';
+    return localStorage.getItem('gloam_ai_art') !== 'false';
   });
 
   useEffect(() => {
@@ -67,10 +67,6 @@ const BookReader: React.FC = () => {
   // Fetch/generate narration when section changes
   useEffect(() => {
     if (!currentSection || !gameState || !outline) {
-      setCachedNarration(null);
-      return;
-    }
-    if (currentSection.narrator_text && currentSection.narrator_text.length > 50) {
       setCachedNarration(null);
       return;
     }
