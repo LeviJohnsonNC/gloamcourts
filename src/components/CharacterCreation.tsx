@@ -41,9 +41,9 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6 }}
-      className="w-full max-w-5xl mx-auto backdrop-blur-sm rounded-lg border border-border/40 overflow-hidden"
+      className="w-full max-w-5xl mx-auto backdrop-blur-md rounded-lg border border-border/40 overflow-hidden"
       style={{
-        background: 'hsl(var(--background) / 0.25)',
+        background: 'hsl(var(--background) / 0.82)',
         boxShadow: 'inset 0 0 40px hsl(0 0% 0% / 0.4), 0 0 60px hsl(0 0% 0% / 0.3)',
       }}
     >
@@ -98,7 +98,7 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
               <div
                 key={stat}
                 className="flex items-center justify-between rounded px-3 py-2.5 gap-3 transition-colors"
-                style={{ background: 'hsl(var(--muted) / 0.25)' }}
+                style={{ background: 'hsl(var(--muted) / 0.45)' }}
               >
                 <div className="min-w-0 flex-1">
                   <div className="font-display text-sm text-foreground">{stat}</div>
@@ -169,7 +169,7 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
                 transition={{ duration: 0.25 }}
                 className="rounded-lg p-5 border"
                 style={{
-                  background: 'hsl(var(--muted) / 0.4)',
+                  background: 'hsl(var(--muted) / 0.55)',
                   borderColor: 'hsl(var(--gold-dim) / 0.4)',
                 }}
               >
@@ -226,7 +226,7 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
                           boxShadow: '0 0 12px hsl(var(--gold) / 0.15)',
                           background: 'hsl(var(--gold) / 0.08)',
                         }
-                      : { background: 'hsl(var(--muted) / 0.15)' }
+                      : { background: 'hsl(var(--muted) / 0.3)' }
                   }
                 >
                   {isSelected && (
@@ -268,10 +268,10 @@ const CharacterCreation: React.FC<CharacterCreationProps> = ({ onComplete }) => 
 
       {/* ===== SEAL BAR ===== */}
       <div
-        className="sticky bottom-0 border-t px-5 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 backdrop-blur-md"
+        className="sticky bottom-0 border-t px-5 sm:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 backdrop-blur-lg"
         style={{
           borderColor: 'hsl(var(--border) / 0.4)',
-          background: 'hsl(var(--background) / 0.7)',
+          background: 'hsl(var(--background) / 0.85)',
         }}
       >
         <div className="flex items-center gap-4 text-xs font-display tracking-wider text-muted-foreground">
