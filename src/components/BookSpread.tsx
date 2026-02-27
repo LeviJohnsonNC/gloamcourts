@@ -151,18 +151,17 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           </div>
         )}
 
-        {/* Loading narration */}
-        {loadingNarration && (
-          <div className="flex items-center gap-2 mb-4">
+        {/* Narrator text or loading state */}
+        {loadingNarration ? (
+          <div className="flex items-center gap-2 mb-8 py-8">
             <Loader2 size={14} className="animate-spin text-gold" />
             <span className="text-xs text-muted-foreground font-display">The Narrator composes…</span>
           </div>
+        ) : (
+          <div className="text-narrative text-foreground whitespace-pre-line mb-8">
+            {displayText}
+          </div>
         )}
-
-        {/* Narrator text */}
-        <div className="text-narrative text-foreground whitespace-pre-line mb-8">
-          {displayText}
-        </div>
 
         {/* Death */}
         {isDead && (
