@@ -1,41 +1,54 @@
 
 
-## Diagnosis
+## Prefetch Next Sections While Player Reads
 
-Two root causes identified:
+The idea is solid. Each section's choices point to specific `next_section`, `success_section`, and `fail_section` numbers. While the player reads, we can fire off `fetchOrGenerateSection` for all reachable next sections in the background. When the player navigates, the narration is already cached in `run_sections_cache` and loads instantly.
 
-### Issue 1: Same opening page every time
-The LLM outline generation is **timing out** on the client side. The network request to `generate-outline` shows `Error: Failed to fetch` — the edge function runs (logs show it completing successfully) but it takes too long for the browser's fetch timeout. When this happens, the code in `useGameState.tsx` (line 37) falls back to the **demo outline generator**, which has the exact same hardcoded narrator text every time. The demo generator always produces "YOU stand before the gates of the Gloam Courts..." for section 1.
+### Architecture
 
-Additionally, `BookReader.tsx` line 73-76 **skips narration generation** if `narrator_text` is already >50 chars — and since the demo outline includes full narrator text, the section-level narration (which would be unique) is never triggered.
+```text
+Player lands on Section 5
+  → Display narration (already fetched or loading)
+  → Scan choices for target section numbers
+     Choice A (free)  → next_section: 12
+     Choice B (test)  → success: 14, fail: 13
+  → Fire prefetch for sections 12, 13, 14 in parallel
+  → Results land in run_sections_cache (DB)
+  → When player picks a choice → fetchOrGenerateSection hits cache → instant
+```
 
-### Issue 2: Blank ink plate instead of generated image
-`aiArtEnabled` defaults to `false` (line 45-47 in BookReader.tsx — only `true` if `localStorage.getItem('gloam_ai_art') === 'true'`). Since it's off by default, the auto-generation `useEffect` in BookSpread never fires, and the InkPlate placeholder shows instead. There's no indication to the user that they need to toggle this on.
-
----
-
-## Plan
-
-### A. Fix outline timeout → always-unique adventures
-
-**File: `src/lib/llmService.ts`**
-- Add an `AbortController` with a 120-second timeout (instead of browser's default ~30s) to the `generate-outline` fetch call. This gives the LLM enough time to produce the 60-120 section outline.
-
-**File: `src/hooks/useGameState.tsx`**
-- Add a retry (1 attempt) if the first outline call fails with a network error before falling back to demo.
-
-### B. Enable AI art by default
-
-**File: `src/pages/BookReader.tsx`**  
-- Change the `aiArtEnabled` default from `localStorage.getItem('gloam_ai_art') === 'true'` to `localStorage.getItem('gloam_ai_art') !== 'false'` — so it's **on by default** for new users, but users who explicitly turned it off stay off.
-
-### C. Always attempt unique narration for demo fallback
+### Changes
 
 **File: `src/pages/BookReader.tsx`**
-- Remove the early-return on line 73-76 that skips narration generation when `narrator_text` is >50 chars. Instead, always attempt to fetch/generate unique narration, using the outline's text as the fallback display while loading. This way even demo fallback runs will get unique narration per section (if the section generation edge function works).
 
-### Files changed
-- `src/lib/llmService.ts` — add fetch timeout
-- `src/hooks/useGameState.tsx` — add retry logic
-- `src/pages/BookReader.tsx` — default AI art to on, remove narration skip
+Add a second `useEffect` after the existing narration fetch effect. Once the current section's narration finishes loading (`!loadingNarration` and `cachedNarration` exists), collect all unique target section numbers from the current section's choices (`next_section`, `success_section`, `fail_section`). For each, look up the `Section` object from the outline and call `fetchOrGenerateSection` in the background (fire-and-forget, no state updates needed — the results get cached in the DB). Use a `Set` ref to avoid re-prefetching the same sections.
+
+```typescript
+// Prefetch next reachable sections
+useEffect(() => {
+  if (!currentSection || !gameState || !outline || loadingNarration) return;
+
+  const targets = new Set<number>();
+  for (const c of currentSection.choices) {
+    if (c.next_section) targets.add(c.next_section);
+    if (c.success_section) targets.add(c.success_section);
+    if (c.fail_section) targets.add(c.fail_section);
+  }
+
+  targets.forEach(sn => {
+    const sec = outline.sections.find(s => s.section_number === sn);
+    if (sec) {
+      fetchOrGenerateSection(gameState.run_id, sec, gameState, outline);
+      // fire-and-forget — result lands in run_sections_cache
+    }
+  });
+}, [currentSection?.section_number, loadingNarration]);
+```
+
+No changes needed to `fetchOrGenerateSection` — it already checks `run_sections_cache` first and writes results back to it. The prefetch simply warms the cache.
+
+### Files to modify
+- `src/pages/BookReader.tsx` — add one `useEffect` (~15 lines)
+
+No backend or database changes needed.
 
