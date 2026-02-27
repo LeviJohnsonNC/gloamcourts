@@ -1,54 +1,50 @@
 
 
-## Prefetch Next Sections While Player Reads
+## Stylistic Adventure Loading Screen with Progress Steps
 
-The idea is solid. Each section's choices point to specific `next_section`, `success_section`, and `fail_section` numbers. While the player reads, we can fire off `fetchOrGenerateSection` for all reachable next sections in the background. When the player navigates, the narration is already cached in `run_sections_cache` and loads instantly.
+Currently the loading screen is just a spinner + single stage text. We'll replace it with a gothic-themed multi-step progress indicator that shows what's done, what's active, and what's pending.
 
-### Architecture
+### Design
 
 ```text
-Player lands on Section 5
-  → Display narration (already fetched or loading)
-  → Scan choices for target section numbers
-     Choice A (free)  → next_section: 12
-     Choice B (test)  → success: 14, fail: 13
-  → Fire prefetch for sections 12, 13, 14 in parallel
-  → Results land in run_sections_cache (DB)
-  → When player picks a choice → fetchOrGenerateSection hits cache → instant
+              ✦ The Author Awakens ✦
+
+  ✓  Summoning the Author         ██████████  done
+  ✓  Weaving the world            ██████████  done
+  ◉  Plotting your fate           ████░░░░░░  active (pulsing)
+  ○  Binding the pages                        pending
+  ○  Sealing the cover                        pending
+
+         Seed: amber-fox-42
 ```
+
+Each step gets a gothic icon treatment: completed steps show a gold check with strikethrough-style dimming, the active step pulses with a blood glow, and pending steps are muted with empty circles.
 
 ### Changes
 
+**File: `src/lib/llmService.ts`**
+- Replace the two `onStage` string calls with structured stage keys: call `onStage('summoning')` before auth, `onStage('weaving')` before fetch, `onStage('plotting')` after response received, `onStage('binding')` before validation, `onStage('sealing')` after validation succeeds. This gives 5 discrete steps.
+
+**File: `src/hooks/useGameState.tsx`**
+- Change `outlineStage` from `string` to `string` (keeping type, but now it receives stage keys).
+- The initial stage is `'summoning'`.
+- On retry, set stage back to `'summoning'`.
+
 **File: `src/pages/BookReader.tsx`**
+- Replace the simple spinner loading screen with a new `LoadingRitual` component (inline or extracted).
+- Define an ordered array of steps with keys, labels, and flavor text:
+  - `summoning` → "Summoning the Author" / "A quill scratches in the dark…"
+  - `weaving` → "Weaving the World" / "Ink bleeds into parchment…"
+  - `plotting` → "Plotting Your Fate" / "The threads of destiny pull taut…"
+  - `binding` → "Binding the Pages" / "Leather and bone, pressed together…"
+  - `sealing` → "Sealing the Cover" / "Wax drips. The seal is set."
+- Render each step as a row with: status icon (check/spinner/circle), label styled with `font-display`, and flavor text in `font-narrative`.
+- Use framer-motion `AnimatePresence` to fade in each step as it becomes active.
+- Show a thin `Progress` bar at the bottom mapped to `(completedSteps / totalSteps) * 100`.
+- Keep the seed display at the bottom.
 
-Add a second `useEffect` after the existing narration fetch effect. Once the current section's narration finishes loading (`!loadingNarration` and `cachedNarration` exists), collect all unique target section numbers from the current section's choices (`next_section`, `success_section`, `fail_section`). For each, look up the `Section` object from the outline and call `fetchOrGenerateSection` in the background (fire-and-forget, no state updates needed — the results get cached in the DB). Use a `Set` ref to avoid re-prefetching the same sections.
-
-```typescript
-// Prefetch next reachable sections
-useEffect(() => {
-  if (!currentSection || !gameState || !outline || loadingNarration) return;
-
-  const targets = new Set<number>();
-  for (const c of currentSection.choices) {
-    if (c.next_section) targets.add(c.next_section);
-    if (c.success_section) targets.add(c.success_section);
-    if (c.fail_section) targets.add(c.fail_section);
-  }
-
-  targets.forEach(sn => {
-    const sec = outline.sections.find(s => s.section_number === sn);
-    if (sec) {
-      fetchOrGenerateSection(gameState.run_id, sec, gameState, outline);
-      // fire-and-forget — result lands in run_sections_cache
-    }
-  });
-}, [currentSection?.section_number, loadingNarration]);
-```
-
-No changes needed to `fetchOrGenerateSection` — it already checks `run_sections_cache` first and writes results back to it. The prefetch simply warms the cache.
-
-### Files to modify
-- `src/pages/BookReader.tsx` — add one `useEffect` (~15 lines)
-
-No backend or database changes needed.
+### Files modified
+- `src/lib/llmService.ts` — 5 stage callbacks instead of 2
+- `src/hooks/useGameState.tsx` — initial stage key update
+- `src/pages/BookReader.tsx` — new loading ritual UI
 
