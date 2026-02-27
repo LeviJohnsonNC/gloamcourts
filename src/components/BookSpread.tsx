@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Section, Choice, GameState, CombatState, Stance, CombatAction, RangeBand, getActiveTwist } from '@/rules/types';
 import { canMakeGatedChoice } from '@/rules/engine';
 import InkPlate from './InkPlate';
@@ -39,6 +39,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
   const isEnding = section.is_ending;
   const [generatingPlate, setGeneratingPlate] = useState(false);
   const [plateUrl, setPlateUrl] = useState<string | null>(cachedNarration?.plate_url || null);
+  const [selectedChoice, setSelectedChoice] = useState<number | null>(null);
 
   const activeTwist = getActiveTwist(gameState.status_effects);
 
@@ -49,6 +50,7 @@ const BookSpread: React.FC<BookSpreadProps> = ({
 
   React.useEffect(() => {
     setPlateUrl(cachedNarration?.plate_url || null);
+    setSelectedChoice(null);
   }, [cachedNarration?.plate_url, section.section_number]);
 
   // Auto-generate plate when AI art is enabled and section has a plate
@@ -274,85 +276,140 @@ const BookSpread: React.FC<BookSpreadProps> = ({
           </div>
         )}
 
-        {/* Pre-roll tools */}
-        {!combatState && !isDead && !isEnding && section.choices.some(c => c.type === 'test') && (
-          <div className="mt-6 border border-border/50 rounded p-3 bg-muted/10">
-            <p className="text-xs text-muted-foreground font-display tracking-wider uppercase mb-2">Before you roll...</p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              {gameState.resources.focus >= focusCost && !focusSpent && onSpendFocus && (
-                <button onClick={onSpendFocus} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
-                  <Brain size={12} className="text-hex" /> Spend {focusCost} Focus (-{focusTnReduction} TN)
-                </button>
-              )}
-              {focusSpent && <span className="text-xs text-gold font-display py-2">Focus spent: TN -{focusTnReduction} ✓</span>}
-              {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display py-2">Darkness embraced: +{embraceBonusDice} dice ✓</span>}
-              {embraceBonusDice === 0 && onEmbraceDarkness && (
-                <>
-                  <button onClick={() => onEmbraceDarkness('madness')} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
-                    <Skull size={12} className="text-madness" />
-                    <span>Embrace Madness (+2 dice, +1 Mad)</span>
-                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡+1 Mad</span>}
-                  </button>
-                  <button onClick={() => onEmbraceDarkness('taint')} className="flex items-center gap-1.5 px-3 py-2.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation">
-                    <Skull size={12} className="text-taint" />
-                    <span>Embrace Taint (+2 dice, +1 Taint)</span>
-                    {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡+1 Mad</span>}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Choices */}
         {!combatState && !isDead && !isEnding && section.choices.length > 0 && (
-          <div className="mt-6 space-y-3">
+          <div className="mt-6 space-y-2">
             <h3 className="font-display text-xs tracking-widest text-gold-dim uppercase">What do you do?</h3>
             {section.choices.map((choice, i) => {
               const gated = choice.type === 'gated' && !canMakeGatedChoice(gameState, choice);
               const isClueGated = choice.required_clue_tags && choice.required_clue_tags.length > 0;
               const flavorKey = `choice_${i}`;
               const flavor = cachedNarration?.choice_flavor?.[flavorKey];
+              const isTest = choice.type === 'test';
+              const isCombat = choice.type === 'combat';
+              const gutFeel = isTest && choice.tn ? computeGutFeel(choice.tn, choice.opposing_pool, choice.base_pool) : null;
+              const isSelected = selectedChoice === i;
+
               return (
-                <button
+                <motion.div
                   key={i}
-                  onClick={() => !gated && onChoice(choice)}
-                  disabled={gated}
-                  className={`w-full text-left p-3 rounded border transition-all font-narrative text-sm ${
+                  layout
+                  className={`rounded-lg border transition-all overflow-hidden ${
                     gated
-                      ? 'border-border text-muted-foreground opacity-40 cursor-not-allowed'
-                      : 'border-border hover:border-gold-dim hover:bg-muted/30 text-foreground'
+                      ? 'border-border opacity-40 cursor-not-allowed'
+                      : isSelected
+                        ? 'border-gold/60 bg-muted/30 ring-1 ring-gold/20'
+                        : 'border-border hover:border-gold-dim/60 hover:bg-muted/10 cursor-pointer'
                   }`}
+                  onClick={() => {
+                    if (gated) return;
+                    if (!isTest || isSelected) {
+                      // Free choices or second click on test → execute
+                      if (!isTest) onChoice(choice);
+                      else setSelectedChoice(isSelected ? null : i);
+                    } else {
+                      setSelectedChoice(i);
+                    }
+                  }}
                 >
-                  <div className="flex items-start gap-2">
-                    {gated && <Lock size={12} className="mt-0.5 text-muted-foreground" />}
-                    <div>
-                      <span>{choice.label}</span>
-                      {choice.type === 'test' && (
-                        <span className="ml-2 text-xs text-gold-dim">[{choice.stat_used} test]</span>
-                      )}
-                      {choice.type === 'test' && choice.tn && (
-                        <span className={`ml-1 text-xs ${GUT_FEEL_COLORS[computeGutFeel(choice.tn, choice.opposing_pool, choice.base_pool)]}`}>
-                          ({computeGutFeel(choice.tn, choice.opposing_pool, choice.base_pool)})
-                        </span>
-                      )}
-                      {choice.type === 'combat' && (
-                        <span className="ml-2 text-xs text-destructive">[Combat]</span>
+                  {/* Card header */}
+                  <div className="p-3 flex items-start gap-3">
+                    {gated && <Lock size={14} className="mt-0.5 text-muted-foreground shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-narrative text-sm text-foreground leading-snug">{choice.label}</p>
+                      {flavor && (
+                        <p className="text-xs text-gold-dim/70 mt-1">{flavor}</p>
                       )}
                       {isClueGated && gated && (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          [Needs leverage. ({choice.min_clues_required || choice.required_clue_tags!.length} clues)]
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Needs leverage — {choice.min_clues_required || choice.required_clue_tags!.length} clues required
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Chips */}
+                    <div className="flex flex-wrap gap-1.5 shrink-0">
+                      {isTest && choice.stat_used && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gold/10 border border-gold/30 text-[11px] font-display text-gold tracking-wide">
+                          {choice.stat_used} test
                         </span>
                       )}
-                      {choice.stakes && (
-                        <p className="text-xs text-muted-foreground mt-1 italic">{choice.stakes}</p>
+                      {isCombat && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-destructive/10 border border-destructive/30 text-[11px] font-display text-destructive tracking-wide">
+                          <Sword size={10} /> Combat
+                        </span>
                       )}
-                      {flavor && (
-                        <p className="text-xs text-gold-dim/70 mt-0.5 italic">{flavor}</p>
+                      {gutFeel && (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-display tracking-wide border ${
+                          gutFeel === 'Feels safe' ? 'bg-accent/10 border-accent/30 text-accent'
+                          : gutFeel === 'Risky' ? 'bg-gold/10 border-gold/30 text-gold'
+                          : 'bg-destructive/10 border-destructive/30 text-destructive'
+                        }`}>
+                          {gutFeel}
+                        </span>
                       )}
                     </div>
                   </div>
-                </button>
+
+                  {/* Expanded state for test choices */}
+                  <AnimatePresence>
+                    {isSelected && isTest && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="px-3 pb-3 pt-1 border-t border-border/50 space-y-2">
+                          {choice.stakes && (
+                            <p className="text-xs text-muted-foreground">{choice.stakes}</p>
+                          )}
+
+                          {/* Roll tools inline */}
+                          <div className="flex flex-wrap gap-2">
+                            {gameState.resources.focus >= focusCost && !focusSpent && onSpendFocus && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onSpendFocus(); }}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-hex-blue/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation"
+                              >
+                                <Brain size={11} className="text-hex" /> Spend {focusCost} Focus (-{focusTnReduction} TN)
+                              </button>
+                            )}
+                            {focusSpent && <span className="text-xs text-gold font-display py-1.5">TN -{focusTnReduction} ✓</span>}
+                            {embraceBonusDice > 0 && <span className="text-xs text-destructive font-display py-1.5">+{embraceBonusDice} dice ✓</span>}
+                            {embraceBonusDice === 0 && onEmbraceDarkness && (
+                              <>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onEmbraceDarkness('madness'); }}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-madness-green/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation"
+                                >
+                                  <Skull size={11} className="text-madness" /> Madness (+2 dice)
+                                  {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡</span>}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); onEmbraceDarkness('taint'); }}
+                                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-taint-purple/50 text-foreground text-xs font-display hover:bg-muted/30 transition-colors touch-manipulation"
+                                >
+                                  <Skull size={11} className="text-taint" /> Taint (+2 dice)
+                                  {activeTwist?.type === 'GreyNotice' && <span className="text-destructive text-[10px]">⚡</span>}
+                                </button>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Confirm roll button */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onChoice(choice); }}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded bg-gold/15 border border-gold/40 text-gold font-display text-sm hover:bg-gold/25 transition-colors touch-manipulation"
+                          >
+                            <ArrowRight size={14} /> Roll the Bones
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
               );
             })}
           </div>
