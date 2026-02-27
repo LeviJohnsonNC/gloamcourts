@@ -122,6 +122,23 @@
   .ink-wash {
     background: radial-gradient(ellipse at center, hsl(var(--ink) / 0.8) 0%, transparent 70%);
   }
+
+  .animate-candle-flicker {
+    animation: candleFlicker 8s ease-in-out infinite;
+  }
+}
+
+@keyframes candleFlicker {
+  0%, 100% { transform: translateX(-50%) translate(0, 0) scale(1); opacity: 0.9; }
+  25% { transform: translateX(-50%) translate(6px, 2px) scale(1.03); opacity: 0.75; }
+  50% { transform: translateX(-50%) translate(-3px, -1px) scale(0.98); opacity: 0.85; }
+  75% { transform: translateX(-50%) translate(4px, 3px) scale(1.02); opacity: 0.8; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-candle-flicker {
+    animation: none !important;
+  }
 }
 
 @layer utilities {
