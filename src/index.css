@@ -92,6 +92,18 @@
     box-shadow: var(--shadow-page);
   }
 
+  .folio-spine {
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      hsl(var(--gold-dim) / 0.15) 40%,
+      hsl(var(--gold-dim) / 0.25) 50%,
+      hsl(var(--gold-dim) / 0.15) 60%,
+      transparent 100%
+    );
+    box-shadow: 0 0 12px hsl(0 0% 0% / 0.4);
+  }
+
   .text-narrative {
     font-family: var(--font-narrative);
     font-size: 1.1rem;

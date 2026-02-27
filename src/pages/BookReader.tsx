@@ -11,6 +11,7 @@ import { hasUsedTraitAbility } from '@/rules/engine';
 import { playPageFlip } from '@/lib/pageFlipSound';
 import { fetchOrGenerateSection, CachedSection } from '@/lib/llmService';
 import { Book, Scroll, Home, Copy, Check, Loader2, Lightbulb, MoreVertical } from 'lucide-react';
+import heroBg from '@/assets/hero-bg.png';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from '@/hooks/use-toast';
@@ -156,8 +157,23 @@ const BookReader: React.FC = () => {
 
   if (showCharCreate) {
     return (
-      <div className="min-h-screen bg-background p-4 flex items-center justify-center">
-        <CharacterCreation onComplete={handleCharCreate} />
+      <div className="relative min-h-screen overflow-hidden">
+        {/* Hero background layers (same as Index) */}
+        <img src={heroBg} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at 50% 40%, hsl(30 15% 10% / 0.55) 0%, hsl(30 15% 6% / 0.88) 60%, hsl(0 0% 0% / 0.95) 100%)' }} />
+        <div className="absolute inset-0 opacity-[0.04] pointer-events-none mix-blend-overlay">
+          <svg width="100%" height="100%">
+            <filter id="grain-cc"><feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" /><feColorMatrix type="saturate" values="0" /></filter>
+            <rect width="100%" height="100%" filter="url(#grain-cc)" />
+          </svg>
+        </div>
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute animate-candle-flicker" style={{ width: '800px', height: '800px', top: '-15%', left: '50%', transform: 'translateX(-50%)', background: 'radial-gradient(ellipse at center, hsl(40 50% 45% / 0.08) 0%, hsl(30 40% 30% / 0.03) 40%, transparent 70%)' }} />
+        </div>
+        {/* Content */}
+        <div className="relative z-10 min-h-screen flex items-center justify-center p-4 py-8">
+          <CharacterCreation onComplete={handleCharCreate} />
+        </div>
       </div>
     );
   }
