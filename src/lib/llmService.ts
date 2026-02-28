@@ -25,7 +25,7 @@ export async function generateLLMOutline(
 
     onStage?.('weaving');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000);
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
