@@ -20,7 +20,6 @@ import { Progress } from '@/components/ui/progress';
 
 const RITUAL_STEPS = [
   { key: 'summoning', label: 'Summoning the Author', flavor: 'A quill scratches in the dark…' },
-  { key: 'weaving', label: 'Weaving the World', flavor: 'Ink bleeds into parchment…' },
   { key: 'plotting', label: 'Plotting Your Fate', flavor: 'The threads of destiny pull taut…' },
   { key: 'binding', label: 'Binding the Pages', flavor: 'Leather and bone, pressed together…' },
   { key: 'sealing', label: 'Sealing the Cover', flavor: 'Wax drips. The seal is set.' },
