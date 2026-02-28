@@ -271,7 +271,13 @@ Output ONLY the JSON object.`;
 
       const data = await response.json();
       let content = data.choices?.[0]?.message?.content || "";
-      content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+      // Strip markdown fences, leading/trailing whitespace, and any preamble before JSON
+      content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+      // If still no leading {, try to extract JSON object directly
+      if (!content.startsWith("{")) {
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) content = jsonMatch[0];
+      }
 
       try {
         sectionData = JSON.parse(content);
