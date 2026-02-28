@@ -6,36 +6,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const WORLD_BIBLE_PROMPT = `You are the World Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Output STRICT JSON only — no markdown, no commentary.
-
-Generate a World Bible for this adventure seed. The world is a lattice of decaying aristocratic domains in perpetual twilight.
-
-OUTPUT JSON:
-{
-  "courts": [
-    {"name": "string", "motto": "string", "signature": "brief visual/thematic signature", "taboo": "what they never do"},
-    // exactly 3 courts
-  ],
-  "factions": [
-    {"name": "string", "goal": "string", "method": "string", "tell": "visual or behavioral tell"},
-    // exactly 6 factions. MUST include: House Vael, The Pallid Ministry, Iron Saints, The Echo Vault keepers, The Grey Protocol, and one unique faction
-  ],
-  "recurring_npcs": [
-    {"name": "string", "role": "string", "voice_tick": "speech quirk or mannerism", "tell": "physical or behavioral tell", "secret": "hidden motivation"},
-    // exactly 5 NPCs
-  ],
-  "signature_places": [
-    {"name": "string", "one_line": "atmospheric one-liner"},
-    // exactly 10 places. MUST include: Bone Market, Echo Vault, Undercroft, and 7 unique locations
-  ],
-  "linguistic_rules": {
-    "naming_style": "brief description of naming conventions (e.g., 'Victorian compound words with body-part metaphors')",
-    "forbidden_words": ["orc", "zombie", "cyber", "space", "cowboy", "dragon", "elf", "dwarf"]
-  }
-}
-
-TONE: Gothic dark comedy. Names should feel unique and sticky — not generic fantasy. Think Gormenghast meets Discworld meets Bloodborne.`;
-
 const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. You output STRICT JSON only — no markdown, no commentary.
 
 RULES YOU MUST NOT BREAK:
@@ -86,7 +56,17 @@ ENDINGS:
 PLATES:
 - has_plate=true for all boss sections and ~15% of other sections
 
-WORLD BIBLE USAGE:
+WORLD BIBLE:
+You MUST generate a world_bible as part of the output. The world is a lattice of decaying aristocratic domains in perpetual twilight. Gothic dark comedy — think Gormenghast meets Discworld meets Bloodborne.
+
+The world_bible object MUST contain:
+- "courts": exactly 3 objects with {name, motto, signature, taboo}
+- "factions": exactly 6 objects with {name, goal, method, tell}. MUST include: House Vael, The Pallid Ministry, Iron Saints, The Echo Vault keepers, The Grey Protocol, and one unique faction
+- "recurring_npcs": exactly 5 objects with {name, role, voice_tick, tell, secret}
+- "signature_places": exactly 10 objects with {name, one_line}. MUST include: Bone Market, Echo Vault, Undercroft, and 7 unique locations
+- "linguistic_rules": {naming_style, forbidden_words: ["orc","zombie","cyber","space","cowboy","dragon","elf","dwarf"]}
+
+WORLD BIBLE USAGE IN SECTIONS:
 - Every section MUST reference at least one world_bible element in location_tag or outline_summary
 - At least 40% of sections must reference a faction OR recurring NPC
 - Names must be consistent — reuse world_bible names, don't invent new ones
@@ -99,7 +79,13 @@ OUTPUT the outline as a single JSON object:
   "seed": string,
   "start_section": 1,  // MUST always be 1
   "required_codex_keys": string[],
-  "world_bible": <the world bible object provided>,
+  "world_bible": {
+    "courts": [...],
+    "factions": [...],
+    "recurring_npcs": [...],
+    "signature_places": [...],
+    "linguistic_rules": {...}
+  },
   "sections": [
     {
       "section_number": number,
@@ -201,51 +187,13 @@ serve(async (req) => {
       .eq("is_true_ending_required", true);
     const requiredKeys = (codexKeys || []).map((k: any) => k.codex_key).slice(0, 5);
 
-    // Stage 1: Generate World Bible
-    console.log("Generating world bible for seed:", seed);
-    const wbResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash-lite",
-        messages: [
-          { role: "system", content: WORLD_BIBLE_PROMPT },
-          { role: "user", content: `Generate a World Bible for adventure seed: "${seed}". Output ONLY the JSON object.` },
-        ],
-        temperature: 0.3,
-      }),
-    });
-
-    let worldBible = null;
-    if (wbResponse.ok) {
-      const wbData = await wbResponse.json();
-      let wbContent = wbData.choices?.[0]?.message?.content || "";
-      wbContent = wbContent.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-      try {
-        worldBible = JSON.parse(wbContent);
-        console.log("World bible generated:", Object.keys(worldBible));
-      } catch {
-        console.error("Failed to parse world bible:", wbContent.substring(0, 200));
-      }
-    } else {
-      console.error("World bible generation failed:", wbResponse.status);
-    }
-
-    // Stage 2: Generate Outline with World Bible
-    const worldBibleContext = worldBible
-      ? `\n\nWORLD BIBLE (use these names, places, factions consistently):\n${JSON.stringify(worldBible, null, 1)}`
-      : "";
-
-    const outlinePrompt = `Generate an adventure outline for seed: "${seed}".
+    // Single-pass: Generate world bible + outline together
+    const outlinePrompt = `Generate BOTH the world bible AND the adventure outline for seed: "${seed}".
 Required codex keys for true ending: ${JSON.stringify(requiredKeys)}
-${worldBibleContext}
 
 Output ONLY the JSON object.`;
 
-    console.log("Generating outline for seed:", seed);
+    console.log("Generating outline (single pass) for seed:", seed);
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -282,7 +230,11 @@ Output ONLY the JSON object.`;
 
     const data = await response.json();
     let content = data.choices?.[0]?.message?.content || "";
-    content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+    if (!content.startsWith("{")) {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) content = jsonMatch[0];
+    }
 
     let outline;
     try {
@@ -292,11 +244,6 @@ Output ONLY the JSON object.`;
       return new Response(JSON.stringify({ error: "parse_error", message: "The Author's manuscript was illegible." }), {
         status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
-
-    // Inject world_bible into outline for caching
-    if (worldBible) {
-      outline.world_bible = worldBible;
     }
 
     // Ensure seed and required keys
