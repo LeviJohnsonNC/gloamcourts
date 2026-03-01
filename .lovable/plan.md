@@ -1,79 +1,53 @@
 
 
-## Critique of the User's Plan
+## Diagnosis: Why Adventures Take 5+ Minutes and Show Same 3 Choices
 
-The plan is solid and well-specified. A few refinements:
+### Root Cause: LLM Outline is Failing, Falling Back to Demo
 
-1. **`gemini-2.5-flash-lite` may not reliably produce 60-90 sections with zero broken links.** The user's own prior analysis noted flash-lite "drops quality significantly for 80-section structured JSON." Recommendation: try `gemini-2.5-flash` first with the slim schema (which dramatically reduces output tokens), and only downgrade to flash-lite if it still times out. The slim format alone should cut output tokens by ~60-70%, which is the real win.
+The "same 3 choices" on every first page confirms the LLM outline generation is **failing every time**, and the code falls back to `generateDemoOutline()` (line 42 in `useGameState.tsx`). The demo generator hardcodes the same 3 choices for section 1: "Enter through the main gates", "Look for a servant's entrance", "Scale the wall".
 
-2. **`opening_plate_prompt` stored at top-level in outline JSON is good**, but the `generate-plate` edge function currently builds its own fallback prompt from `plateCaption`. The client should pass the `opening_plate_prompt` explicitly for section 1 — no need to change the edge function's interface.
+**Why 5+ minutes?** The client tries the LLM **twice** (line 31: `for (let attempt = 0; attempt < 2; attempt++)`), each with a 180-second timeout (line 28 in `llmService.ts`). Two timeouts = ~6 minutes before the demo fallback kicks in.
 
-3. **The auto-trigger in BookSpread already exists** (lines 57-61) — it fires `handleGeneratePlate` when `aiArtEnabled && section.has_plate && !plateUrl && !generatingPlate`. This is already non-blocking. The main gap is that `cachedNarration?.plate_prompt` is null for section 1 on first load (narration hasn't been fetched yet), so the plate prompt falls back to a generic caption. We need to thread `opening_plate_prompt` from the outline into the plate call for section 1.
+### Why the LLM Outline Fails
 
-4. **WorldBible type needs updating** — the slim schema removes `signature`, `method`, `secret`, `linguistic_rules`. The `WorldBible` interface in `types.ts` must be made compatible.
+The edge function's server-side `validateSlimOutline()` is very strict — it requires:
+- 40-120 sections (the LLM must produce 60-90)
+- 5-8 endings with exactly 1 true ending
+- ZERO broken links
+- `opening_plate_prompt` present
 
-5. **Validator section count range**: user says 60-90, current validator enforces 60-120. Just widen the acceptable range in the validator to match.
+If the LLM produces even 1 broken link or <5 endings, the function returns HTTP 422 (validation error). The client treats any non-200 as `null`, triggering the retry loop.
 
----
+Additionally, **no edge function logs are appearing at all**, which suggests either:
+1. The function is being killed by the platform before it can log (wall-clock timeout), OR
+2. The LLM call itself is timing out within the edge function before returning
 
-## Implementation Plan
+The edge function has no internal timeout on the `fetch` to the AI gateway — it just waits indefinitely until the platform kills it.
 
-### 1. Edge Function: `generate-outline/index.ts` — Slim Prompt
+### The Fix Plan
 
-- Rewrite `OUTLINE_SYSTEM_PROMPT` to request the slim JSON shape exactly as specified (short field names: `n`, `loc`, `beat`, `t`, `nx`, `ok`, `no`, etc.)
-- World bible: 3 courts, 4 factions, 3 NPCs, 8 places — all with short fields
-- Add `opening_plate_prompt` as required top-level field
-- Hard character limits in prompt: beat ≤ 90 chars, label ≤ 40 chars, stakes enum only
-- Instruction: "Return JSON only. No markdown. No explanations."
-- Keep `gemini-2.5-flash` (not flash-lite) — the slim format reduces tokens enough; flash maintains link integrity
-- Temperature: 0.1
-- Update server-side `validateOutline()` to validate the slim shape (field names `n`, `choices` with `nx`/`ok`/`no`, etc.), accept 40-120 sections
-- Add `opening_plate_prompt` presence check
+**1. Add a fetch timeout inside the edge function** (30s AbortController on the AI gateway call) so it fails fast instead of waiting for platform kill.
 
-### 2. Outline Validator: `src/lib/outlineValidator.ts` — Accept Slim Shape
+**2. Relax validation to warnings** — instead of hard-failing on broken links or insufficient endings, attempt to repair them:
+- Auto-fix broken links by redirecting to the nearest valid section
+- If endings < 5, downgrade to a warning (the game can still play)
+- Only hard-fail on truly fatal issues (no sections, no start_section)
 
-- Detect slim vs legacy format (check for `sections[0].n` vs `sections[0].section_number`)
-- For slim format, map fields:
-  - `n` → `section_number`, `loc` → location_tag, `beat` → title/outline_summary
-  - `t` → type, `nx` → next_section, `ok` → success_section, `no` → fail_section
-  - `test.stat` → stat_used, `test.tn` → tn, `test.opp` → opposing_pool
-  - `gate.tag` → required_item_tag, `gate.codex` → required_codex_key, `gate.clues` → required_clue_tags
-  - `enemy` → combat_enemy fields
-  - `inv` → inventory_grants
-- Preserve `opening_plate_prompt` on the output `AdventureOutline`
-- Relax section count to 40-120
-- Keep all link validation, reachability, ending checks
+**3. Reduce the client retry to 1 attempt** (not 2) and reduce the client timeout from 180s to 60s. If the edge function can't respond in 60s, it won't respond at all.
 
-### 3. Types: `src/rules/types.ts` — Update WorldBible + AdventureOutline
+**4. Add better error logging** — surface the specific validation errors in the client console so we can see exactly why outlines fail.
 
-- Make `WorldBible` fields optional where the slim schema drops them (`signature`, `method`, `secret`, `linguistic_rules`)
-- Add `opening_plate_prompt?: string` to `AdventureOutline`
+**5. Reduce section count requirement** — change the minimum from 40 to 30 in both the edge function validator and client-side validator, giving the LLM more room to produce a valid outline.
 
-### 4. BookReader: `src/pages/BookReader.tsx` — Thread opening_plate_prompt
+### Files to Modify
 
-- After outline loads, store `outline.opening_plate_prompt` 
-- Pass it to `BookSpread` as a new prop `openingPlatePrompt`
+- `supabase/functions/generate-outline/index.ts` — add 30s fetch timeout, relax validation (auto-repair broken links, lower section minimum to 30, downgrade some errors to warnings)
+- `src/lib/llmService.ts` — reduce client timeout to 60s, remove retry loop (1 attempt only), log validation errors visibly
+- `src/lib/outlineValidator.ts` — lower section minimum from 40 to 30, relax ending count requirement
 
-### 5. BookSpread: `src/components/BookSpread.tsx` — Use opening_plate_prompt for section 1
-
-- Accept `openingPlatePrompt?: string` prop
-- In `handleGeneratePlate`, if `section.section_number === outline.start_section` (or === 1), use `openingPlatePrompt` as the plate prompt instead of `cachedNarration?.plate_prompt`
-- The existing auto-trigger effect already handles non-blocking plate generation
-- Add "Illustration is being inked…" text (already present as "Illustrating…" on line 146)
-
-### 6. Telemetry — Lightweight timing logs
-
-- In `useGameState.createNewRun`: record `outline_ms` = time from fetch start to outline received
-- In BookReader's section 1 effect: record `section1_plate_requested_at` and `section1_plate_ready_at`
-- Write to `run_state.log_json` via an append update
-- `console.log` in dev mode
-
-### Files to modify:
-- `supabase/functions/generate-outline/index.ts` — slim prompt + slim validation
-- `src/lib/outlineValidator.ts` — accept slim shape, map to internal types
-- `src/rules/types.ts` — update WorldBible, add opening_plate_prompt
-- `src/pages/BookReader.tsx` — pass openingPlatePrompt prop
-- `src/components/BookSpread.tsx` — use openingPlatePrompt for section 1
-- `src/hooks/useGameState.tsx` — timing telemetry
-- `src/lib/llmService.ts` — minor: pass opening_plate_prompt through
+### Expected Result
+- Edge function responds within 30-40s (or fails fast at 30s)
+- Client waits max 60s (not 360s)
+- More outlines pass validation due to auto-repair and relaxed rules
+- If it still fails, demo fallback happens in ~60s instead of ~6 minutes
 
