@@ -5,7 +5,7 @@ import { createInitialGameState, serializeGameState, deserializeGameState, navig
 import { initCombat, resolveCombatRound, isCombatOver, changeStance } from '@/rules/combat';
 import { opposedRoll, simpleRoll, getPoolSize, getTargetNumber, rerollDice, countSuccesses, convertLowestDie } from '@/rules/dice';
 import { generateOutline as generateDemoOutline } from '@/generators/demoOutlineGenerator';
-import { generateLLMOutline } from '@/lib/llmService';
+import { generateLLMOutline, OutlineResult } from '@/lib/llmService';
 import { generateEpitaph } from '@/lib/epitaphGenerator';
 import { toast } from '@/hooks/use-toast';
 
@@ -28,20 +28,31 @@ export function useGameState() {
     setOutlineStage('summoning');
 
     let adventure: AdventureOutline | null = null;
-    // Single attempt only — edge function has 30s timeout, client has 60s timeout
+    let outlineSource: string = 'demo';
+    
     try {
-      adventure = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
+      const result = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
+      if (result) {
+        adventure = result.outline;
+        outlineSource = result.source;
+        if (result.timing) {
+          console.log(`[Outline] source=${result.source} timing:`, result.timing);
+        }
+        if (result.source === 'emergency') {
+          toast({ title: 'Degraded outline', description: 'Using a shorter adventure — the Author was rushed.' });
+        }
+      }
     } catch (e) {
       console.error('[Outline] LLM outline failed:', e);
     }
 
-    const usedFallback = !adventure;
     if (!adventure) {
       adventure = generateDemoOutline(seed);
-      console.warn('[Outline] Using demo fallback — LLM outline failed or timed out');
+      outlineSource = 'demo';
+      console.warn('[Outline] Using demo fallback — both LLM tiers failed');
       toast({ title: 'The Courts are silent', description: "Using quick fallback. The Author was too slow this time." });
     } else {
-      console.log(`[Outline] LLM outline received: ${adventure.sections.length} sections, title: "${adventure.title}"`);
+      console.log(`[Outline] LLM outline received (${outlineSource}): ${adventure.sections.length} sections, title: "${adventure.title}"`);
     }
 
     setOutline(adventure);
