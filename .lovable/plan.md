@@ -1,63 +1,79 @@
 
 
-## Speed Up Adventure Generation: Merge Two LLM Calls Into One
+## Critique of the User's Plan
 
-### Analysis
+The plan is solid and well-specified. A few refinements:
 
-The current `generate-outline` edge function makes **two sequential LLM calls**:
+1. **`gemini-2.5-flash-lite` may not reliably produce 60-90 sections with zero broken links.** The user's own prior analysis noted flash-lite "drops quality significantly for 80-section structured JSON." Recommendation: try `gemini-2.5-flash` first with the slim schema (which dramatically reduces output tokens), and only downgrade to flash-lite if it still times out. The slim format alone should cut output tokens by ~60-70%, which is the real win.
 
-1. **World Bible** (gemini-2.5-flash-lite) → ~3-8 seconds
-2. **Full Outline** (gemini-2.5-flash) → ~30-60 seconds, using world bible as input
+2. **`opening_plate_prompt` stored at top-level in outline JSON is good**, but the `generate-plate` edge function currently builds its own fallback prompt from `plateCaption`. The client should pass the `opening_plate_prompt` explicitly for section 1 — no need to change the edge function's interface.
 
-The outline call **waits** for the world bible to complete before starting. This is the single biggest structural inefficiency — an entire extra round-trip that adds 3-8 seconds of pure latency.
+3. **The auto-trigger in BookSpread already exists** (lines 57-61) — it fires `handleGeneratePlate` when `aiArtEnabled && section.has_plate && !plateUrl && !generatingPlate`. This is already non-blocking. The main gap is that `cachedNarration?.plate_prompt` is null for section 1 on first load (narration hasn't been fetched yet), so the plate prompt falls back to a generic caption. We need to thread `opening_plate_prompt` from the outline into the plate call for section 1.
 
-### The Single Biggest Improvement
+4. **WorldBible type needs updating** — the slim schema removes `signature`, `method`, `secret`, `linguistic_rules`. The `WorldBible` interface in `types.ts` must be made compatible.
 
-**Merge world bible generation into the outline call.** Instead of two sequential calls, make one call to `gemini-2.5-flash` that generates both the world bible AND the outline in a single pass. The model is already being told to use consistent names/factions/places — it doesn't need a separate world bible step to do that. We just embed the world bible schema into the outline output schema.
+5. **Validator section count range**: user says 60-90, current validator enforces 60-120. Just widen the acceptable range in the validator to match.
 
-```text
-BEFORE:
-  Call 1 (flash-lite): Generate world bible     ~5s
-  Wait...
-  Call 2 (flash):      Generate outline          ~40s
-  Total wall clock:                              ~45s
+---
 
-AFTER:
-  Call 1 (flash):      Generate world bible      ~45s
-                       + outline in single pass
-  Total wall clock:                              ~40s (saves 5-8s)
-```
+## Implementation Plan
 
-This saves **one full network round-trip + one full LLM inference pass**. The output token count stays roughly the same (world bible is small compared to 80 sections), so the merged call won't be meaningfully slower than the outline call alone.
+### 1. Edge Function: `generate-outline/index.ts` — Slim Prompt
 
-### Why not other approaches?
+- Rewrite `OUTLINE_SYSTEM_PROMPT` to request the slim JSON shape exactly as specified (short field names: `n`, `loc`, `beat`, `t`, `nx`, `ok`, `no`, etc.)
+- World bible: 3 courts, 4 factions, 3 NPCs, 8 places — all with short fields
+- Add `opening_plate_prompt` as required top-level field
+- Hard character limits in prompt: beat ≤ 90 chars, label ≤ 40 chars, stakes enum only
+- Instruction: "Return JSON only. No markdown. No explanations."
+- Keep `gemini-2.5-flash` (not flash-lite) — the slim format reduces tokens enough; flash maintains link integrity
+- Temperature: 0.1
+- Update server-side `validateOutline()` to validate the slim shape (field names `n`, `choices` with `nx`/`ok`/`no`, etc.), accept 40-120 sections
+- Add `opening_plate_prompt` presence check
 
-- **Parallel calls**: Can't — outline needs world bible names for consistency.
-- **Faster model for outline**: `flash-lite` drops quality significantly for 80-section structured JSON with zero broken links. Not worth the tradeoff.
-- **Fewer sections**: Sacrifices gameplay depth — user said no quality loss.
-- **Streaming**: Doesn't help — we need complete JSON before validation.
+### 2. Outline Validator: `src/lib/outlineValidator.ts` — Accept Slim Shape
 
-### Changes
+- Detect slim vs legacy format (check for `sections[0].n` vs `sections[0].section_number`)
+- For slim format, map fields:
+  - `n` → `section_number`, `loc` → location_tag, `beat` → title/outline_summary
+  - `t` → type, `nx` → next_section, `ok` → success_section, `no` → fail_section
+  - `test.stat` → stat_used, `test.tn` → tn, `test.opp` → opposing_pool
+  - `gate.tag` → required_item_tag, `gate.codex` → required_codex_key, `gate.clues` → required_clue_tags
+  - `enemy` → combat_enemy fields
+  - `inv` → inventory_grants
+- Preserve `opening_plate_prompt` on the output `AdventureOutline`
+- Relax section count to 40-120
+- Keep all link validation, reachability, ending checks
 
-**File: `supabase/functions/generate-outline/index.ts`**
+### 3. Types: `src/rules/types.ts` — Update WorldBible + AdventureOutline
 
-- Remove the separate `WORLD_BIBLE_PROMPT` and Stage 1 fetch call entirely.
-- Fold the world bible schema into `OUTLINE_SYSTEM_PROMPT`, making `world_bible` a required top-level key in the output JSON (it already is — we just tell the model to generate it inline instead of receiving it as input).
-- Remove the `worldBibleContext` injection into the user prompt.
-- Update the user prompt to say "Generate BOTH the world bible AND the adventure outline."
-- Keep the same model (`gemini-2.5-flash`) and temperature.
-- Keep all validation logic unchanged.
+- Make `WorldBible` fields optional where the slim schema drops them (`signature`, `method`, `secret`, `linguistic_rules`)
+- Add `opening_plate_prompt?: string` to `AdventureOutline`
 
-**File: `src/lib/llmService.ts`**
+### 4. BookReader: `src/pages/BookReader.tsx` — Thread opening_plate_prompt
 
-- Remove the `'weaving'` stage (no longer a separate step). Remap stages to 4 steps: `summoning` (auth), `plotting` (request sent), `binding` (validation), `sealing` (done).
+- After outline loads, store `outline.opening_plate_prompt` 
+- Pass it to `BookSpread` as a new prop `openingPlatePrompt`
 
-**File: `src/pages/BookReader.tsx`**
+### 5. BookSpread: `src/components/BookSpread.tsx` — Use opening_plate_prompt for section 1
 
-- Update `RITUAL_STEPS` array to remove the "Weaving the World" step (now 4 steps instead of 5). Adjust progress math accordingly.
+- Accept `openingPlatePrompt?: string` prop
+- In `handleGeneratePlate`, if `section.section_number === outline.start_section` (or === 1), use `openingPlatePrompt` as the plate prompt instead of `cachedNarration?.plate_prompt`
+- The existing auto-trigger effect already handles non-blocking plate generation
+- Add "Illustration is being inked…" text (already present as "Illustrating…" on line 146)
 
-### Files to modify
-- `supabase/functions/generate-outline/index.ts` — merge prompts, remove Stage 1 call
-- `src/lib/llmService.ts` — simplify stage callbacks
-- `src/pages/BookReader.tsx` — update loading ritual steps
+### 6. Telemetry — Lightweight timing logs
+
+- In `useGameState.createNewRun`: record `outline_ms` = time from fetch start to outline received
+- In BookReader's section 1 effect: record `section1_plate_requested_at` and `section1_plate_ready_at`
+- Write to `run_state.log_json` via an append update
+- `console.log` in dev mode
+
+### Files to modify:
+- `supabase/functions/generate-outline/index.ts` — slim prompt + slim validation
+- `src/lib/outlineValidator.ts` — accept slim shape, map to internal types
+- `src/rules/types.ts` — update WorldBible, add opening_plate_prompt
+- `src/pages/BookReader.tsx` — pass openingPlatePrompt prop
+- `src/components/BookSpread.tsx` — use openingPlatePrompt for section 1
+- `src/hooks/useGameState.tsx` — timing telemetry
+- `src/lib/llmService.ts` — minor: pass opening_plate_prompt through
 
