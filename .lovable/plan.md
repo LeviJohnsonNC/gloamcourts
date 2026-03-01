@@ -1,78 +1,52 @@
 
-Diagnosis (from logs/data I checked)
-1) Timeout is real and consistent:
-- `POST /functions/v1/generate-outline` returns `504` with `{"error":"timeout","timing":{"wall_clock_ms":45003}}`.
-- That means the backend hard wall clock (45s) is tripping before a valid outline is returned.
 
-2) The repeated first-page choices are definitely fallback content:
-- Recent `runs` rows all show `section_count = 28` and first choice `"Enter through the main gates"`.
-- That exact label comes from the demo fallback generator, not live outline generation.
+## Why It's Still Timing Out
 
-3) There is no successful “re-fire” after timeout:
-- Current flow in `useGameState` does one attempt, then immediately falls back.
-- So if outline times out once, you always get the same default first page for that run.
+The logs tell the full story:
+- **AI headers arrive at 20s** (status 200 — the model accepted the request)
+- **AI full body arrives at 55s** (the response is streaming slowly)
+- **Wall-clock timeout fires at 45s** — before the body finishes
+- **T2 (emergency) never gets a chance** because the T1 `callAI` is still consuming the response body when the wall-clock kills everything
 
-4) Edge log visibility is currently poor:
-- Direct edge-log query returned empty, but network + DB evidence is sufficient to confirm timeout + fallback behavior.
+The two-tier strategy is broken: `Promise.race` rejects T1 at 25s, but the pending `response.json()` call keeps the event loop busy. The 45s wall-clock fires while T1's body is still downloading, leaving zero time for T2.
 
-Proposed fix (target: eliminate timeout pain and eliminate “same 3 choices”)
-A) Split startup generation into a fast minimal outline + on-demand enrichment
-- Change `generate-outline` to return a much smaller startup graph (e.g., 12–18 sections, 2 choices each, minimal fields only) within ~15–25s.
-- Keep current `generate-section` for rich prose on demand.
-- Optionally add “expand-outline” backend function that grows the graph in the background when player reaches deeper nodes.
+## The Fix: AbortController + Parallel Racing
 
-B) Remove heavy fields from startup payload
-- In startup outline generation, drop/trim expensive fields:
-  - no full world-bible synthesis at startup (or use a tiny static/seeded scaffold)
-  - no inventory object arrays unless strictly needed for first act
-  - keep only: `title`, `start_section`, `sections[n, beat, choices(nx/ok/no,type)]`, `opening_plate_prompt`
-- This is the largest latency win.
+### 1. `supabase/functions/generate-outline/index.ts`
 
-C) Add adaptive timeout ladder instead of single hard failure
-- In `generate-outline`:
-  - Try “standard compact” for up to ~25s.
-  - If not complete, abort and run “ultra-compact emergency prompt” for up to ~10s.
-  - Return whichever succeeds first.
-- Do not return 504 unless both tiers fail.
+**Use AbortController to actually kill the fetch**, not just race against it. When T1's 25s budget expires, abort the HTTP connection so the body download stops immediately. Then T2 gets a clean 15s window.
 
-D) Replace deterministic demo fallback with seeded “quick AI fallback”
-- If both tiers fail, call a tiny emergency prompt (6–10 sections) instead of static `demoOutlineGenerator`.
-- This prevents identical “same 3 choices” runs and keeps experience variable.
+```text
+Timeline target:
+  0s ──── T1 fetch starts (AbortController, 25s signal)
+  20s ─── headers arrive
+  25s ─── AbortController fires, fetch CANCELLED
+  25s ─── T2 fetch starts (AbortController, 15s signal)
+  ~35s ── T2 completes (8-12 sections, tiny payload)
+  <45s ── Response returned
+```
 
-E) Persist source + reason metadata for observability
-- On run creation, write:
-  - `outline_source: 'primary' | 'degraded' | 'emergency' | 'demo'`
-  - `outline_failure_reason: 'timeout_primary' | 'timeout_all' | 'validation' | ...`
-  - timing fields (`headers_ms`, `body_ms`, `parse_ms`, `total_ms`)
-- Show this in `run_state.log_json` and console to make diagnosis immediate.
+Key changes in `callAI`:
+- Accept an `AbortSignal` parameter and pass it to `fetch()`
+- Each tier creates its own `AbortController` with its budget
+- When the timeout fires, `controller.abort()` kills the in-flight request immediately
 
-F) Relax validation where it doesn’t block play
-- Keep fatal checks only for true blockers (missing sections/start/broken shape).
-- Convert noncritical constraints (ending count, distribution targets) to warnings.
-- Auto-repair links (already present) and continue.
+### 2. Shrink Emergency Prompt Further
 
-Files to update
-1) `supabase/functions/generate-outline/index.ts`
-- Implement two-tier generation strategy and smaller startup schema.
-- Add strict aborts for each tier and richer timing/failure metadata in response.
+The current emergency prompt still asks for a JSON schema with `world_bible`, `required_codex_keys`, etc. Strip it to absolute minimum — just `title`, `start_section`, `sections[]` with `n`, `beat`, `choices[]`. Target ~500 tokens of output for T2 (currently it's producing thousands).
 
-2) `src/lib/llmService.ts`
-- Handle multi-tier success payload and preserve source/reason/timing.
-- If backend returns degraded outline, proceed (don’t treat as failure).
+### 3. Add `max_tokens` to AI Requests
 
-3) `src/hooks/useGameState.tsx`
-- Save `outline_source` and `outline_failure_reason` into `run_state.log_json`.
-- Replace static fallback call path with emergency mini-outline path.
+Set `max_tokens: 4000` for T1 and `max_tokens: 1500` for T2. This caps the response size and prevents the model from generating an unexpectedly large output that takes forever to stream.
 
-4) `src/lib/outlineValidator.ts`
-- Add support for “startup minimal” outline schema.
-- Keep essential integrity checks, downgrade noncritical checks to warnings.
+### Files to Modify
 
-5) (Optional) `supabase/functions/expand-outline/index.ts` + client hook
-- Expand graph progressively after run starts, so user never waits on a big upfront payload.
+- **`supabase/functions/generate-outline/index.ts`** — Add `AbortController` to `callAI`, set `max_tokens` on both tiers, strip emergency prompt, fix the race logic so T2 actually runs
+- No client-side changes needed — the client already handles `503` and falls back
 
-Acceptance criteria
-- New run starts in under 30s in normal conditions.
-- First page is no longer the same 3 deterministic fallback choices across runs.
-- Timeout incidents still allow a non-static emergency outline.
-- Metadata clearly shows whether run used primary/degraded/emergency path and why.
+### Expected Result
+- T1 either completes in <25s or is hard-killed at 25s
+- T2 gets a clean 15s window with a tiny prompt
+- Total wall-clock stays under 45s
+- If both fail, client gets `503` and uses demo fallback (but T2 should succeed consistently with such a small prompt)
+
