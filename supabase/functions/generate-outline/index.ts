@@ -8,6 +8,8 @@ const corsHeaders = {
 
 const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Return JSON ONLY. No markdown. No explanations.
 
+You MUST produce 30-40 sections. No more. No less.
+
 HARD RULES:
 - Stats: STEEL, GUILE, WITS, GRACE, HEX
 - TN: 2-10, pools: 1-8, enemy hp: 2-12
@@ -17,13 +19,13 @@ HARD RULES:
 - Keep ALL strings as short as possible. Brevity is mandatory.
 
 STRUCTURE:
-- 45-65 sections. Section numbers: unique integers 1..200.
-- Every non-death/non-ending section: 2-3 choices.
+- 30-40 sections ONLY. Section numbers: unique integers 1..100.
+- Every non-death/non-ending section: 2 choices (not 3).
 - ALL nx/ok/no values MUST point to existing section n values. ZERO broken links.
 - start_section MUST be 1.
-- 5-10 combat, 6-12 WITS tests, 5-10 GUILE tests, 4-8 HEX tests.
-- 4-8 gated choices, 6-10 clue items (Clue:* tags).
-- 3-5 endings, exactly 1 true ending (true_end=true).
+- 3-5 combat, 4-6 WITS tests, 3-5 GUILE tests, 2-4 HEX tests.
+- 2-4 gated choices, 4-6 clue items (Clue:* tags).
+- 3-4 endings, exactly 1 true ending (true_end=true).
 - Exactly 1 twist section in Act II.
 - Start section MUST have plate=true.
 
@@ -136,7 +138,7 @@ serve(async (req) => {
 
     const outlinePrompt = `Generate the slim outline for seed: "${seed}".
 Required codex keys for true ending: ${JSON.stringify(requiredKeys)}
-Target: 45-65 sections. Keep strings SHORT. Return ONLY JSON.`;
+IMPORTANT: Exactly 30-40 sections. 2 choices per section. Keep ALL strings under 50 chars. Return ONLY JSON, no markdown.`;
 
     console.log("Generating slim outline for seed:", seed);
     const wallClockStart = Date.now();
@@ -214,7 +216,7 @@ async function callAIAndParse(apiKey: string, prompt: string): Promise<any> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+      model: "google/gemini-2.5-flash-lite",
       messages: [
         { role: "system", content: OUTLINE_SYSTEM_PROMPT },
         { role: "user", content: prompt },
