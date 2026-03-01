@@ -35,9 +35,13 @@ export function useGameState() {
       console.error('[Outline] LLM outline failed:', e);
     }
 
+    const usedFallback = !adventure;
     if (!adventure) {
       adventure = generateDemoOutline(seed);
-      toast({ title: 'The Courts are silent', description: "You'll get the ink-and-paper version this time." });
+      console.warn('[Outline] Using demo fallback — LLM outline failed or timed out');
+      toast({ title: 'The Courts are silent', description: "Using quick fallback. The Author was too slow this time." });
+    } else {
+      console.log(`[Outline] LLM outline received: ${adventure.sections.length} sections, title: "${adventure.title}"`);
     }
 
     setOutline(adventure);
