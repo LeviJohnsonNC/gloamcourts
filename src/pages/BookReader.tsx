@@ -406,6 +406,8 @@ const BookReader: React.FC = () => {
           loadingNarration={loadingNarration}
           aiArtEnabled={aiArtEnabled}
           runId={gameState.run_id}
+          openingPlatePrompt={outline?.opening_plate_prompt}
+          startSection={outline?.start_section}
         />
       </main>
 

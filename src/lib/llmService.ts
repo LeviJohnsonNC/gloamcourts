@@ -44,7 +44,14 @@ export async function generateLLMOutline(
     }
 
     onStage?.('binding');
-    const { outline: raw } = await resp.json();
+    const respJson = await resp.json();
+    const raw = respJson.outline;
+    const timing = respJson.timing;
+    
+    if (timing?.outline_ms) {
+      console.log(`[Telemetry] outline_ms: ${timing.outline_ms}`);
+    }
+    
     const result = validateAndConvertOutline(raw, seed);
 
     if (!result.valid || !result.outline) {

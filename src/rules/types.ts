@@ -146,11 +146,11 @@ export interface CombatEnemy {
 export type CombatAction = 'attack' | 'defend' | 'trick' | 'flee' | 'advance' | 'withdraw';
 
 export interface WorldBible {
-  courts: { name: string; motto: string; signature: string; taboo: string }[];
-  factions: { name: string; goal: string; method: string; tell: string }[];
-  recurring_npcs: { name: string; role: string; voice_tick: string; tell?: string; secret: string }[];
+  courts: { name: string; motto: string; signature?: string; taboo: string }[];
+  factions: { name: string; goal: string; method?: string; tell: string }[];
+  recurring_npcs: { name: string; role: string; voice_tick: string; tell?: string; secret?: string }[];
   signature_places: { name: string; one_line: string }[];
-  linguistic_rules: { naming_style: string; forbidden_words: string[] };
+  linguistic_rules?: { naming_style: string; forbidden_words: string[] };
 }
 
 export interface AdventureOutline {
@@ -160,6 +160,7 @@ export interface AdventureOutline {
   start_section: number;
   required_codex_keys?: string[];
   world_bible?: WorldBible;
+  opening_plate_prompt?: string;
 }
 
 export interface GameState {

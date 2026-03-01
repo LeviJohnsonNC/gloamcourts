@@ -6,133 +6,80 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. You output STRICT JSON only — no markdown, no commentary.
+const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Return JSON ONLY. No markdown. No explanations. No commentary.
 
-RULES YOU MUST NOT BREAK:
-- You NEVER decide dice outcomes. You only define section structure, TNs, pools, and choices.
-- Item tags MUST be from: Sharp, Key, Ranged, Light, Holy, Poison, Coin, Seal, OR any "Clue:*" tag for clue items
-- Status effects MUST be from: Paranoia, Marked, Hollow-Eyed, Touched, Corrupted, Abomination
+HARD RULES:
 - Stats: STEEL, GUILE, WITS, GRACE, HEX
-- TN range: 2-10, pools: 1-8, enemy health: 2-12
-- No new resources, no new mechanics.
+- TN: 2-10, pools: 1-8, enemy hp: 2-12
+- stakes MUST be one of: "safe"|"risky"|"bleak"|"tempting"|"unknown"
+- Item tags: Sharp, Key, Ranged, Light, Holy, Poison, Coin, Seal, or "Clue:*"
+- beat: max 90 characters. label: max 40 characters. No prose anywhere.
+- Avoid long names. Keep all strings short.
 
-STRUCTURE REQUIREMENTS:
-- 60-120 sections total (aim for 80-90)
-- Section numbers: unique integers from 1..400 (classic Fighting Fantasy vibe)
-- Every section MUST have 2-4 choices (except death/ending sections which have 0)
-- ALL next_section/success_section/fail_section MUST point to existing section_numbers (ZERO broken links)
-- Start section must be reachable and must reach at least 85% of all sections
+STRUCTURE:
+- 60-90 sections. Section numbers: unique integers 1..400.
+- Every non-death/non-ending section: 2-3 choices.
+- ALL nx/ok/no values MUST point to existing section n values. ZERO broken links.
+- start_section MUST be 1 and reachable to 85%+ of sections.
+- 8-15 combat, 10-20 WITS tests, 8-15 GUILE tests, 6-12 HEX tests.
+- 6-12 gated choices, 8-14 clue items (Clue:* tags).
+- 5-8 endings, exactly 1 true ending (true_end=true).
+- Exactly 1 twist section in Act II.
+- Start section MUST have plate=true.
 
-ACT STRUCTURE:
-- Act I (first ~25% of sections): Setup, establish the Court, initial problem, 1-2 factions introduced. act_tag="ACT_I"
-- Act II (next ~50% of sections): Pressure builds, clue network deepens, TWIST occurs, consequences stack. act_tag="ACT_II"
-- Act III (final ~25% of sections): Reckoning, final approaches to endings. act_tag="ACT_III"
+WORLD BIBLE (compact):
+- 3 courts: {name, motto, taboo} — each field max 80 chars
+- 4 factions: {name, goal, tell} — each field max 80 chars. Include: House Vael, The Pallid Ministry, Iron Saints, The Grey Protocol
+- 3 recurring_npcs: {name, role, voice_tick, tell} — each field max 80 chars
+- 8 signature_places: {name, one_line} — each field max 80 chars. Include: Bone Market, Echo Vault, Undercroft
 
-CONTENT MINIMUMS:
-- 8-15 combat sections
-- 10-20 WITS investigation tests
-- 8-15 GUILE social leverage tests
-- 6-12 HEX temptation moments
-- 6-12 gated choices (item tags OR clue gates)
-- 8-14 clue-granting sections (inventory_grants with is_clue=true and "Clue:*" tags)
-- 6-10 clue-gated choices
-
-CLUE SYSTEM:
-- Clues are inventory items with is_clue=true and tags starting with "Clue:" (e.g., "Clue:Ashwick", "Clue:Protocol")
-- Clue gates use: gate: { "required_clue_tags": ["Clue:X", "Clue:Y"], "min_required": 2 }
-- Clues reward investigation and clever play
-
-TWIST (exactly 1):
-- One section in Act II must have is_twist=true
-- twist_type must be one of: "DebtWrit", "GreyNotice", "HollowContract"
-- The twist section must be on a main path (reachable on most routes)
-- After twist, at least 10 sections should reference consequences in outline_summary
-
-ENDINGS:
-- 5-8 endings total, exactly 1 true ending (is_true_ending=true)
-- True ending gated by a "Sealed Door" checking 5 required codex keys
-- Death sections: is_death=true, no choices
-
-PLATES:
-- has_plate=true for all boss sections and ~15% of other sections
-
-WORLD BIBLE:
-You MUST generate a world_bible as part of the output. The world is a lattice of decaying aristocratic domains in perpetual twilight. Gothic dark comedy — think Gormenghast meets Discworld meets Bloodborne.
-
-The world_bible object MUST contain:
-- "courts": exactly 3 objects with {name, motto, signature, taboo}
-- "factions": exactly 6 objects with {name, goal, method, tell}. MUST include: House Vael, The Pallid Ministry, Iron Saints, The Echo Vault keepers, The Grey Protocol, and one unique faction
-- "recurring_npcs": exactly 5 objects with {name, role, voice_tick, tell, secret}
-- "signature_places": exactly 10 objects with {name, one_line}. MUST include: Bone Market, Echo Vault, Undercroft, and 7 unique locations
-- "linguistic_rules": {naming_style, forbidden_words: ["orc","zombie","cyber","space","cowboy","dragon","elf","dwarf"]}
-
-WORLD BIBLE USAGE IN SECTIONS:
-- Every section MUST reference at least one world_bible element in location_tag or outline_summary
-- At least 40% of sections must reference a faction OR recurring NPC
-- Names must be consistent — reuse world_bible names, don't invent new ones
-- Each section MAY include "npc_mentions": ["NPC Name"] for NPCs present in that section
-- Each recurring NPC should appear in at least 6 sections total across the outline
-
-OUTPUT the outline as a single JSON object:
+OUTPUT exactly this JSON shape:
 {
   "title": string,
   "seed": string,
-  "start_section": 1,  // MUST always be 1
+  "start_section": 1,
   "required_codex_keys": string[],
   "world_bible": {
-    "courts": [...],
-    "factions": [...],
-    "recurring_npcs": [...],
-    "signature_places": [...],
-    "linguistic_rules": {...}
+    "courts": [{"name":string,"motto":string,"taboo":string}],
+    "factions": [{"name":string,"goal":string,"tell":string}],
+    "recurring_npcs": [{"name":string,"role":string,"voice_tick":string,"tell":string}],
+    "signature_places": [{"name":string,"one_line":string}]
   },
   "sections": [
     {
-      "section_number": number,
-      "outline_summary": string,
-      "location_tag": string,
-      "has_plate": boolean,
-      "is_boss": boolean,
-      "is_death": boolean,
-      "is_ending": boolean,
-      "ending_key": string|null,
-      "is_true_ending": boolean,
-      "codex_unlock": string|null,
-      "rumor_unlock": string|null,
-      "inventory_grants": [{"name":string,"tags":string[],"is_clue":boolean}],
+      "n": number,
+      "loc": string,
+      "beat": string,
+      "plate": boolean,
+      "boss": boolean,
+      "death": boolean,
+      "end": boolean,
+      "end_key": string|null,
+      "true_end": boolean,
+      "twist": boolean,
+      "twist_type": string|null,
+      "act": "I"|"II"|"III",
+      "codex": string|null,
+      "inv": [{"name":string,"tags":string[],"clue":boolean}],
       "choices": [
         {
-          "choice_id": string,
+          "id": string,
           "label": string,
-          "type": "free"|"test"|"combat"|"gated",
-          "next_section": number|null,
-          "success_section": number|null,
-          "fail_section": number|null,
-          "test": {
-            "stat_used": "STEEL"|"GUILE"|"WITS"|"GRACE"|"HEX",
-            "tn": number,
-            "opposing_pool": number,
-            "stakes": string,
-            "on_success": {"effects":{}},
-            "on_fail": {"effects":{}}
-          }|null,
-          "gate": {"required_item_tag":string}|{"required_codex_key":string}|{"required_clue_tags":string[],"min_required":number}|null,
-          "combat_enemy": {
-            "name": string,
-            "pool": number,
-            "tn": number,
-            "health": number,
-            "engaged_bonus": number,
-            "is_boss": boolean
-          }|null
+          "t": "free"|"test"|"combat"|"gated",
+          "nx": number|null,
+          "ok": number|null,
+          "no": number|null,
+          "test": {"stat":string,"tn":number,"opp":number,"stakes":string,"fx_ok":null,"fx_no":null}|null,
+          "gate": {"tag":string}|{"codex":string}|{"clues":string[],"min":number}|null,
+          "enemy": {"name":string,"pool":number,"tn":number,"hp":number,"eng":number,"boss":boolean}|null
         }
-      ],
-      "act_tag": "ACT_I"|"ACT_II"|"ACT_III",
-      "is_twist": boolean,
-      "twist_type": string|null
+      ]
     }
-  ]
-}`;
+  ],
+  "opening_plate_prompt": string
+}
+
+opening_plate_prompt: REQUIRED. A short (max 120 chars) gritty ink-wash illustration prompt for the opening scene. Style: "black ink wash, crosshatch, gothic". No text in image. Describe the scene vividly.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -187,13 +134,13 @@ serve(async (req) => {
       .eq("is_true_ending_required", true);
     const requiredKeys = (codexKeys || []).map((k: any) => k.codex_key).slice(0, 5);
 
-    // Single-pass: Generate world bible + outline together
-    const outlinePrompt = `Generate BOTH the world bible AND the adventure outline for seed: "${seed}".
+    const outlinePrompt = `Generate the slim outline for seed: "${seed}".
 Required codex keys for true ending: ${JSON.stringify(requiredKeys)}
+Return ONLY the JSON object. No markdown fences. No explanation.`;
 
-Output ONLY the JSON object.`;
+    console.log("Generating slim outline for seed:", seed);
+    const startMs = Date.now();
 
-    console.log("Generating outline (single pass) for seed:", seed);
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -206,9 +153,12 @@ Output ONLY the JSON object.`;
           { role: "system", content: OUTLINE_SYSTEM_PROMPT },
           { role: "user", content: outlinePrompt },
         ],
-        temperature: 0.2,
+        temperature: 0.1,
       }),
     });
+
+    const elapsedMs = Date.now() - startMs;
+    console.log(`AI response received in ${elapsedMs}ms`);
 
     if (!response.ok) {
       const errText = await response.text();
@@ -252,8 +202,8 @@ Output ONLY the JSON object.`;
       outline.required_codex_keys = requiredKeys;
     }
 
-    // Server-side validation (basic — client does full validation)
-    const errors = validateOutline(outline);
+    // Server-side validation
+    const errors = validateSlimOutline(outline);
     if (errors.length > 0) {
       console.error("Outline validation errors:", errors);
       return new Response(JSON.stringify({ error: "validation_error", message: "The outline had structural problems.", details: errors }), {
@@ -261,7 +211,9 @@ Output ONLY the JSON object.`;
       });
     }
 
-    return new Response(JSON.stringify({ outline }), {
+    console.log(`Outline validated: ${outline.sections.length} sections, elapsed total: ${Date.now() - startMs}ms`);
+
+    return new Response(JSON.stringify({ outline, timing: { outline_ms: elapsedMs } }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
@@ -272,20 +224,22 @@ Output ONLY the JSON object.`;
   }
 });
 
-function validateOutline(o: any): string[] {
+function validateSlimOutline(o: any): string[] {
   const errors: string[] = [];
   if (!o || typeof o !== "object") { errors.push("Not an object"); return errors; }
   if (!o.title) errors.push("Missing title");
   if (!o.start_section) errors.push("Missing start_section");
+  if (!o.opening_plate_prompt) errors.push("Missing opening_plate_prompt");
   if (!Array.isArray(o.sections)) { errors.push("sections is not an array"); return errors; }
-  if (o.sections.length < 60) errors.push(`Too few sections: ${o.sections.length} (need 60-120)`);
-  if (o.sections.length > 120) errors.push(`Too many sections: ${o.sections.length} (need 60-120)`);
+  if (o.sections.length < 40) errors.push(`Too few sections: ${o.sections.length} (need 40-120)`);
+  if (o.sections.length > 120) errors.push(`Too many sections: ${o.sections.length} (need 40-120)`);
 
   const nums = new Set<number>();
   for (const s of o.sections) {
-    if (typeof s.section_number !== "number") { errors.push("Section missing section_number"); continue; }
-    if (nums.has(s.section_number)) errors.push(`Duplicate section_number: ${s.section_number}`);
-    nums.add(s.section_number);
+    const sn = s.n ?? s.section_number;
+    if (typeof sn !== "number") { errors.push("Section missing n"); continue; }
+    if (nums.has(sn)) errors.push(`Duplicate section: ${sn}`);
+    nums.add(sn);
   }
 
   if (!nums.has(o.start_section)) errors.push(`start_section ${o.start_section} not in sections`);
@@ -294,7 +248,8 @@ function validateOutline(o: any): string[] {
   let brokenLinks = 0;
   for (const s of o.sections) {
     for (const c of (s.choices || [])) {
-      for (const key of ["next_section", "success_section", "fail_section"]) {
+      // Slim format uses nx/ok/no
+      for (const key of ["nx", "ok", "no", "next_section", "success_section", "fail_section"]) {
         const val = c[key];
         if (val != null && !nums.has(val)) brokenLinks++;
       }
@@ -303,9 +258,9 @@ function validateOutline(o: any): string[] {
   if (brokenLinks > 0) errors.push(`${brokenLinks} broken section links (must be 0)`);
 
   // Endings
-  const endings = o.sections.filter((s: any) => s.is_ending);
+  const endings = o.sections.filter((s: any) => s.end || s.is_ending);
   if (endings.length < 5) errors.push(`Only ${endings.length} endings (need 5-8)`);
-  const trueEndings = o.sections.filter((s: any) => s.is_true_ending);
+  const trueEndings = o.sections.filter((s: any) => s.true_end || s.is_true_ending);
   if (trueEndings.length !== 1) errors.push(`${trueEndings.length} true endings (need exactly 1)`);
 
   return errors;
