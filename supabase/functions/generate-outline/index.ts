@@ -62,21 +62,13 @@ OUTPUT this JSON shape ONLY:
 
 opening_plate_prompt: max 60 chars. "black ink wash, crosshatch, gothic" style.`;
 
-// ─── TIER 2: Emergency ultra-compact (target: 8-12 sections) ───
-const EMERGENCY_SYSTEM = `You are a fast outline generator for "The Gloam Courts" gamebook. Return JSON ONLY. No markdown.
-
-Rules: Stats STEEL/GUILE/WITS/GRACE/HEX. TN 2-10. Stakes: safe|risky|bleak|tempting|unknown.
-
-Generate EXACTLY 8-12 sections. 2 choices each. Section numbers 1..20. start_section=1. 1-2 endings, 1 true ending. Keep ALL strings under 30 chars.
+// ─── TIER 2: Emergency ultra-minimal (target: 8 sections, ~500 tokens) ───
+const EMERGENCY_SYSTEM = `Return JSON ONLY. No markdown. A tiny gamebook outline, 8 sections.
 
 JSON shape:
-{
-  "title": string, "seed": string, "start_section": 1,
-  "required_codex_keys": [],
-  "world_bible": {"courts":[],"factions":[],"recurring_npcs":[],"signature_places":[]},
-  "sections": [{"n":number,"loc":string,"beat":string,"plate":boolean,"boss":boolean,"death":boolean,"end":boolean,"end_key":null,"true_end":boolean,"twist":boolean,"twist_type":null,"act":"I"|"II"|"III","codex":null,"inv":[],"choices":[{"id":string,"label":string,"t":"free"|"test"|"combat","nx":number|null,"ok":number|null,"no":number|null,"test":null,"gate":null,"enemy":null}]}],
-  "opening_plate_prompt": string
-}`;
+{"title":"str","start_section":1,"sections":[{"n":1,"beat":"str","choices":[{"id":"a","label":"str","t":"free","nx":2}]}]}
+
+Rules: 8 sections exactly. n=1..8. 2 choices each (except endings). Last 2 sections are endings (no choices). All nx point to valid n. Strings under 20 chars.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -131,9 +123,9 @@ serve(async (req) => {
 
     const wallClockStart = Date.now();
 
-    // ═══════════ TIER 1: Primary compact (25s budget) ═══════════
+    // ═══════════ TIER 1: Primary compact (25s budget, hard abort) ═══════════
     const primaryPrompt = `Outline for seed: "${seed}". Codex keys: ${JSON.stringify(requiredKeys)}. 15-25 sections, 2 choices each. Strings under 40 chars. JSON only.`;
-    
+
     console.log(`[T1] Starting primary generation for: ${seed}`);
     let outline: any = null;
     let outlineSource = "primary";
@@ -141,17 +133,19 @@ serve(async (req) => {
     let t1Ms = 0;
     let t2Ms = 0;
 
+    const t1Controller = new AbortController();
+    const t1Timer = setTimeout(() => t1Controller.abort(), 25_000);
+
     try {
-      outline = await Promise.race([
-        callAI(LOVABLE_API_KEY, PRIMARY_SYSTEM, primaryPrompt, "google/gemini-2.5-flash-lite"),
-        timeout(25_000, "T1_TIMEOUT"),
-      ]);
+      outline = await callAI(LOVABLE_API_KEY, PRIMARY_SYSTEM, primaryPrompt, "google/gemini-2.5-flash-lite", 4000, t1Controller.signal);
       t1Ms = Date.now() - wallClockStart;
       console.log(`[T1] Completed in ${t1Ms}ms, sections: ${outline?.sections?.length}`);
     } catch (err: any) {
       t1Ms = Date.now() - wallClockStart;
-      failureReason = err.message || "T1_UNKNOWN";
+      failureReason = err.name === "AbortError" ? "T1_TIMEOUT_ABORT" : (err.message || "T1_UNKNOWN");
       console.warn(`[T1] Failed after ${t1Ms}ms: ${failureReason}`);
+    } finally {
+      clearTimeout(t1Timer);
     }
 
     // Validate T1 result
@@ -162,34 +156,34 @@ serve(async (req) => {
         failureReason = `T1_VALIDATION: ${v.errors[0]}`;
         outline = null;
       } else {
-        if (v.warnings.length > 0) console.warn("[T1] Warnings:", v.warnings);
         if (v.repaired > 0) console.log(`[T1] Auto-repaired ${v.repaired} links`);
       }
     }
 
-    // ═══════════ TIER 2: Emergency ultra-compact (15s budget) ═══════════
+    // ═══════════ TIER 2: Emergency ultra-minimal (15s budget, hard abort) ═══════════
     if (!outline) {
       outlineSource = "emergency";
-      const emergencyPrompt = `Quick outline for: "${seed}". 8-12 sections. 2 choices. Very short strings. JSON only.`;
+      const emergencyPrompt = `Gamebook for: "${seed}". 8 sections, n=1..8. 2 choices each except endings. JSON only.`;
       const t2Start = Date.now();
-      
+      const t2Controller = new AbortController();
+      const t2Timer = setTimeout(() => t2Controller.abort(), 15_000);
+
       console.log(`[T2] Starting emergency generation`);
       try {
-        outline = await Promise.race([
-          callAI(LOVABLE_API_KEY, EMERGENCY_SYSTEM, emergencyPrompt, "google/gemini-2.5-flash-lite"),
-          timeout(15_000, "T2_TIMEOUT"),
-        ]);
+        outline = await callAI(LOVABLE_API_KEY, EMERGENCY_SYSTEM, emergencyPrompt, "google/gemini-2.5-flash-lite", 1500, t2Controller.signal);
         t2Ms = Date.now() - t2Start;
         console.log(`[T2] Completed in ${t2Ms}ms, sections: ${outline?.sections?.length}`);
       } catch (err: any) {
         t2Ms = Date.now() - t2Start;
-        failureReason = `${failureReason}; ${err.message || "T2_UNKNOWN"}`;
+        failureReason = `${failureReason}; ${err.name === "AbortError" ? "T2_TIMEOUT_ABORT" : (err.message || "T2_UNKNOWN")}`;
         console.error(`[T2] Failed after ${t2Ms}ms: ${err.message}`);
+      } finally {
+        clearTimeout(t2Timer);
       }
 
-      // Validate T2 with lower bar (minimum 5 sections)
+      // Validate T2 with lower bar (minimum 4 sections)
       if (outline) {
-        const v = validateAndRepairOutline(outline, 5);
+        const v = validateAndRepairOutline(outline, 4);
         if (v.fatal) {
           console.error(`[T2] Validation fatal: ${v.errors.join("; ")}`);
           failureReason = `${failureReason}; T2_VALIDATION: ${v.errors[0]}`;
@@ -234,11 +228,7 @@ serve(async (req) => {
   }
 });
 
-function timeout(ms: number, label: string): Promise<never> {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms));
-}
-
-async function callAI(apiKey: string, system: string, prompt: string, model: string): Promise<any> {
+async function callAI(apiKey: string, system: string, prompt: string, model: string, maxTokens: number, signal: AbortSignal): Promise<any> {
   const t0 = Date.now();
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -250,7 +240,9 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
         { role: "user", content: prompt },
       ],
       temperature: 0.15,
+      max_tokens: maxTokens,
     }),
+    signal,
   });
 
   console.log(`  AI headers: ${Date.now() - t0}ms, status: ${response.status}`);
@@ -284,8 +276,8 @@ function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean
   let repaired = 0;
 
   if (!o || typeof o !== "object") return { fatal: true, errors: ["Not an object"], warnings, repaired };
-  if (!o.title) errors.push("Missing title");
-  if (!o.start_section) errors.push("Missing start_section");
+  if (!o.title) o.title = "The Gloam Courts";
+  if (!o.start_section) o.start_section = 1;
   if (!Array.isArray(o.sections)) return { fatal: true, errors: ["sections not array"], warnings, repaired };
   if (o.sections.length < minSections) {
     errors.push(`Too few sections: ${o.sections.length} (need ${minSections})`);
@@ -295,13 +287,21 @@ function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean
   const nums = new Set<number>();
   for (const s of o.sections) {
     const sn = s.n ?? s.section_number;
-    if (typeof sn !== "number") { errors.push("Section missing n"); continue; }
+    if (typeof sn !== "number") { warnings.push("Section missing n"); continue; }
+    s.n = sn;
     nums.add(sn);
   }
 
   if (!nums.has(o.start_section)) {
-    errors.push(`start_section ${o.start_section} not in sections`);
-    return { fatal: true, errors, warnings, repaired };
+    // Try to fix by using first section
+    const first = o.sections[0]?.n;
+    if (first != null) {
+      o.start_section = first;
+      repaired++;
+    } else {
+      errors.push(`start_section not in sections`);
+      return { fatal: true, errors, warnings, repaired };
+    }
   }
 
   const sortedNums = Array.from(nums).sort((a, b) => a - b);
@@ -315,13 +315,28 @@ function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean
   }
 
   for (const s of o.sections) {
-    for (const c of (s.choices || [])) {
+    // Ensure choices array exists
+    if (!Array.isArray(s.choices)) s.choices = [];
+    for (const c of s.choices) {
       for (const key of ["nx", "ok", "no"]) {
         const val = c[key];
         if (val != null && !nums.has(val)) { c[key] = findNearest(val); repaired++; }
       }
     }
+    // Backfill missing fields for emergency outlines
+    if (s.plate === undefined) s.plate = false;
+    if (s.boss === undefined) s.boss = false;
+    if (s.death === undefined) s.death = false;
+    if (s.end === undefined) s.end = s.choices.length === 0;
+    if (s.true_end === undefined) s.true_end = false;
+    if (s.twist === undefined) s.twist = false;
+    if (s.act === undefined) s.act = "I";
+    if (s.inv === undefined) s.inv = [];
+    if (s.loc === undefined) s.loc = s.beat?.substring(0, 20) || "Unknown";
   }
+
+  // Mark first section plate=true
+  if (o.sections.length > 0) o.sections[0].plate = true;
 
   return { fatal: errors.length > 0, errors, warnings, repaired };
 }
