@@ -28,12 +28,14 @@ interface BookSpreadProps {
   loadingNarration?: boolean;
   aiArtEnabled?: boolean;
   runId?: string;
+  openingPlatePrompt?: string;
+  startSection?: number;
 }
 
 const BookSpread: React.FC<BookSpreadProps> = ({
   section, gameState, combatState, onChoice, onCombatAction, onChangeCombatStance, onDeath, onEnding,
   onNewRun, onReturnHome, onEmbraceDarkness, focusSpent, onSpendFocus, embraceBonusDice = 0, endingDetails,
-  cachedNarration, loadingNarration, aiArtEnabled, runId,
+  cachedNarration, loadingNarration, aiArtEnabled, runId, openingPlatePrompt, startSection = 1,
 }) => {
   const isDead = section.is_death || gameState.resources.health <= 0;
   const isEnding = section.is_ending;
@@ -67,13 +69,29 @@ const BookSpread: React.FC<BookSpreadProps> = ({
   const handleGeneratePlate = async () => {
     if (!runId || generatingPlate) return;
     setGeneratingPlate(true);
+    
+    // For the start section, prefer opening_plate_prompt
+    const isStart = section.section_number === startSection;
+    const prompt = isStart && openingPlatePrompt
+      ? openingPlatePrompt
+      : (cachedNarration?.plate_prompt || undefined);
+    
+    if (isStart) {
+      console.log('[Telemetry] section1_plate_requested_at:', Date.now());
+    }
+    
     const url = await generatePlate(
       runId,
       section.section_number,
-      cachedNarration?.plate_prompt || undefined,
+      prompt,
       plateCaption || section.title,
     );
-    if (url) setPlateUrl(url);
+    if (url) {
+      setPlateUrl(url);
+      if (isStart) {
+        console.log('[Telemetry] section1_plate_ready_at:', Date.now());
+      }
+    }
     setGeneratingPlate(false);
   };
 
@@ -128,7 +146,12 @@ const BookSpread: React.FC<BookSpreadProps> = ({
         {section.has_plate && (
           <div className="my-6">
             {plateUrl ? (
-              <div className="flex flex-col items-center">
+              <motion.div
+                className="flex flex-col items-center"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.8 }}
+              >
                 <img
                   src={plateUrl}
                   alt={plateCaption || 'Ink plate illustration'}
@@ -136,14 +159,14 @@ const BookSpread: React.FC<BookSpreadProps> = ({
                   loading="lazy"
                 />
                 {plateCaption && <p className="mt-2 text-sm text-muted-foreground italic font-narrative text-center">{plateCaption}</p>}
-              </div>
+              </motion.div>
             ) : (
               <div>
                 <InkPlate caption={plateCaption || undefined} />
                 {generatingPlate && (
                   <div className="text-center mt-2 flex items-center justify-center gap-2">
                     <Loader2 size={12} className="animate-spin text-gold" />
-                    <span className="text-xs text-muted-foreground font-display">Illustrating…</span>
+                    <span className="text-xs text-muted-foreground font-display">Illustration is being inked…</span>
                   </div>
                 )}
               </div>

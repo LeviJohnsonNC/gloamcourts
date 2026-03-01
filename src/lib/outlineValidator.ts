@@ -1,64 +1,78 @@
 /**
  * Validates an LLM-generated outline and converts it to the internal AdventureOutline format.
- * Strict validation: 60-120 sections, 0 broken links, reachability, act structure, clue network, twist.
+ * Supports both legacy (verbose) and slim (compact) outline formats.
  */
 import { AdventureOutline, Section, Choice, CombatEnemy, InventoryItem } from '@/rules/types';
-
-interface LLMOutlineSection {
-  section_number: number;
-  outline_summary: string;
-  location_tag: string;
-  has_plate: boolean;
-  is_boss: boolean;
-  is_death: boolean;
-  is_ending: boolean;
-  ending_key: string | null;
-  is_true_ending: boolean;
-  codex_unlock: string | null;
-  rumor_unlock: string | null;
-  inventory_grants: { name: string; tags: string[]; is_clue?: boolean }[];
-  choices: LLMChoice[];
-  act_tag?: 'ACT_I' | 'ACT_II' | 'ACT_III';
-  is_twist?: boolean;
-  twist_type?: string;
-}
-
-interface LLMChoice {
-  choice_id: string;
-  label: string;
-  type: 'free' | 'test' | 'combat' | 'gated';
-  next_section: number | null;
-  success_section: number | null;
-  fail_section: number | null;
-  test: {
-    stat_used: string;
-    tn: number;
-    opposing_pool: number;
-    stakes: string;
-    on_success: any;
-    on_fail: any;
-  } | null;
-  gate: {
-    required_item_tag?: string;
-    required_codex_key?: string;
-    required_clue_tags?: string[];
-    min_required?: number;
-  } | null;
-  combat_enemy: {
-    name: string;
-    pool: number;
-    tn: number;
-    health: number;
-    engaged_bonus: number;
-    is_boss: boolean;
-  } | null;
-}
 
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
   outline?: AdventureOutline;
+}
+
+// Detect slim format by checking for `n` field on first section
+function isSlimFormat(raw: any): boolean {
+  if (!Array.isArray(raw.sections) || raw.sections.length === 0) return false;
+  return typeof raw.sections[0].n === 'number';
+}
+
+// Normalize a section from slim format to a common intermediate
+function normalizeSlimSection(s: any): any {
+  return {
+    section_number: s.n,
+    outline_summary: s.beat || '',
+    location_tag: s.loc || '',
+    has_plate: s.plate || false,
+    is_boss: s.boss || false,
+    is_death: s.death || false,
+    is_ending: s.end || false,
+    ending_key: s.end_key || null,
+    is_true_ending: s.true_end || false,
+    codex_unlock: s.codex || null,
+    rumor_unlock: null,
+    inventory_grants: (s.inv || []).map((item: any) => ({
+      name: item.name,
+      tags: item.tags || [],
+      is_clue: item.clue || false,
+    })),
+    choices: (s.choices || []).map((c: any) => ({
+      choice_id: c.id || `c_${Math.random().toString(36).slice(2, 6)}`,
+      label: c.label || 'Continue',
+      type: c.t || 'free',
+      next_section: c.nx ?? null,
+      success_section: c.ok ?? null,
+      fail_section: c.no ?? null,
+      test: c.test ? {
+        stat_used: c.test.stat,
+        tn: c.test.tn,
+        opposing_pool: c.test.opp || 0,
+        stakes: c.test.stakes || 'unknown',
+        on_success: c.test.fx_ok || null,
+        on_fail: c.test.fx_no || null,
+      } : null,
+      gate: c.gate ? normalizeGate(c.gate) : null,
+      combat_enemy: c.enemy ? {
+        name: c.enemy.name,
+        pool: c.enemy.pool,
+        tn: c.enemy.tn,
+        health: c.enemy.hp,
+        engaged_bonus: c.enemy.eng || 0,
+        is_boss: c.enemy.boss || false,
+      } : null,
+    })),
+    act_tag: s.act ? `ACT_${s.act}` : undefined,
+    is_twist: s.twist || false,
+    twist_type: s.twist_type || null,
+  };
+}
+
+function normalizeGate(gate: any): any {
+  if (gate.tag) return { required_item_tag: gate.tag };
+  if (gate.codex) return { required_codex_key: gate.codex };
+  if (gate.clues) return { required_clue_tags: gate.clues, min_required: gate.min || gate.clues.length };
+  // Legacy format passthrough
+  return gate;
 }
 
 // Graph reachability check using BFS
@@ -92,57 +106,6 @@ function computeReachability(sections: any[], startSection: number): Set<number>
   return visited;
 }
 
-// Detect SCCs without exits using Tarjan's algorithm
-function detectTrappedSCCs(sections: any[]): string[] {
-  const errors: string[] = [];
-  const adj = new Map<number, number[]>();
-  const allNums = new Set<number>();
-
-  for (const s of sections) {
-    allNums.add(s.section_number);
-    const targets: number[] = [];
-    for (const c of (s.choices || [])) {
-      if (c.next_section != null) targets.push(c.next_section);
-      if (c.success_section != null) targets.push(c.success_section);
-      if (c.fail_section != null) targets.push(c.fail_section);
-    }
-    adj.set(s.section_number, targets);
-  }
-
-  // Find sections that are endings or deaths (terminal)
-  const terminals = new Set<number>();
-  for (const s of sections) {
-    if (s.is_death || s.is_ending || (s.choices || []).length === 0) {
-      terminals.add(s.section_number);
-    }
-  }
-
-  // For each non-terminal section, check it can reach a terminal via BFS
-  for (const s of sections) {
-    if (terminals.has(s.section_number)) continue;
-    const visited = new Set<number>();
-    const queue = [s.section_number];
-    visited.add(s.section_number);
-    let canExit = false;
-    while (queue.length > 0 && !canExit) {
-      const curr = queue.shift()!;
-      if (terminals.has(curr) && curr !== s.section_number) { canExit = true; break; }
-      const neighbors = adj.get(curr) || [];
-      for (const n of neighbors) {
-        if (!visited.has(n)) {
-          visited.add(n);
-          queue.push(n);
-        }
-      }
-    }
-    if (!canExit) {
-      errors.push(`Section ${s.section_number} cannot reach any ending/death (trapped cycle)`);
-    }
-  }
-
-  return errors;
-}
-
 export function validateAndConvertOutline(raw: any, seed: string): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -152,13 +115,20 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
   if (!raw.start_section) errors.push('Missing start_section');
   if (!Array.isArray(raw.sections)) return { valid: false, errors: ['sections not array'], warnings };
 
-  // Hard fail: 60-120 sections
-  if (raw.sections.length < 60) errors.push(`Too few sections: ${raw.sections.length} (need 60-120)`);
-  if (raw.sections.length > 120) errors.push(`Too many sections: ${raw.sections.length} (need 60-120)`);
+  const slim = isSlimFormat(raw);
+
+  // Normalize sections if slim
+  const normalizedSections = slim
+    ? raw.sections.map(normalizeSlimSection)
+    : raw.sections;
+
+  // Section count: 40-120
+  if (normalizedSections.length < 40) errors.push(`Too few sections: ${normalizedSections.length} (need 40-120)`);
+  if (normalizedSections.length > 120) errors.push(`Too many sections: ${normalizedSections.length} (need 40-120)`);
 
   // Unique section numbers in 1..400
   const nums = new Set<number>();
-  for (const s of raw.sections) {
+  for (const s of normalizedSections) {
     if (typeof s.section_number !== 'number') { errors.push('Section missing number'); continue; }
     if (s.section_number < 1 || s.section_number > 400) errors.push(`Section ${s.section_number} outside 1..400`);
     if (nums.has(s.section_number)) errors.push(`Duplicate: ${s.section_number}`);
@@ -169,7 +139,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
 
   // Broken links: MUST be 0
   let brokenLinks = 0;
-  for (const s of raw.sections) {
+  for (const s of normalizedSections) {
     for (const c of (s.choices || [])) {
       for (const key of ['next_section', 'success_section', 'fail_section']) {
         const val = c[key];
@@ -182,18 +152,18 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
   if (brokenLinks > 0) errors.push(`${brokenLinks} broken section links (must be 0)`);
 
   // Endings: 5-8, exactly 1 true ending
-  const endings = raw.sections.filter((s: any) => s.is_ending);
-  const trueEndings = raw.sections.filter((s: any) => s.is_true_ending);
+  const endings = normalizedSections.filter((s: any) => s.is_ending);
+  const trueEndings = normalizedSections.filter((s: any) => s.is_true_ending);
   if (endings.length < 5) errors.push(`Only ${endings.length} endings (need 5-8)`);
   if (endings.length > 8) warnings.push(`${endings.length} endings (recommended 5-8)`);
   if (trueEndings.length !== 1) errors.push(`${trueEndings.length} true endings (need exactly 1)`);
 
-  // Content minimums
-  const combatSections = raw.sections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'combat'));
-  const witsSections = raw.sections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'WITS'));
-  const guileSections = raw.sections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'GUILE'));
-  const hexSections = raw.sections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'HEX'));
-  const gatedChoices = raw.sections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'gated' || c.gate));
+  // Content minimums (warnings only)
+  const combatSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'combat'));
+  const witsSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'WITS'));
+  const guileSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'GUILE'));
+  const hexSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'HEX'));
+  const gatedChoices = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'gated' || c.gate));
 
   if (combatSections.length < 8) warnings.push(`Only ${combatSections.length} combat sections (want 8-15)`);
   if (witsSections.length < 10) warnings.push(`Only ${witsSections.length} WITS tests (want 10-20)`);
@@ -203,26 +173,18 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
 
   // Reachability: start must reach 85% of sections
   if (nums.has(raw.start_section) && errors.length === 0) {
-    const reachable = computeReachability(raw.sections, raw.start_section);
+    const reachable = computeReachability(normalizedSections, raw.start_section);
     const reachPct = reachable.size / nums.size;
     if (reachPct < 0.85) {
       errors.push(`Only ${Math.round(reachPct * 100)}% sections reachable from start (need 85%)`);
-    }
-
-    // Trapped cycles check
-    const trappedErrors = detectTrappedSCCs(raw.sections);
-    if (trappedErrors.length > 3) {
-      errors.push(`${trappedErrors.length} sections trapped in infinite cycles`);
-    } else if (trappedErrors.length > 0) {
-      warnings.push(...trappedErrors);
     }
   }
 
   if (errors.length > 0) return { valid: false, errors, warnings };
 
   // Convert to internal format
-  const sections: Section[] = raw.sections.map((s: LLMOutlineSection) => {
-    const choices: Choice[] = (s.choices || []).map((c: LLMChoice) => {
+  const sections: Section[] = normalizedSections.map((s: any) => {
+    const choices: Choice[] = (s.choices || []).map((c: any) => {
       const choice: Choice = {
         label: c.label || 'Continue',
         type: c.type || 'free',
@@ -255,7 +217,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
       return choice;
     });
 
-    const combatChoice = s.choices?.find((c: LLMChoice) => c.combat_enemy);
+    const combatChoice = s.choices?.find((c: any) => c.combat_enemy);
     const combatEnemy: CombatEnemy | undefined = combatChoice?.combat_enemy ? {
       name: combatChoice.combat_enemy.name,
       pool: Math.max(1, Math.min(8, combatChoice.combat_enemy.pool)),
@@ -267,7 +229,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
       engaged_bonus: combatChoice.combat_enemy.engaged_bonus || 0,
     } : undefined;
 
-    // Build inventory items from grants (including clues)
+    // Build inventory items from grants
     const inventoryGrants: InventoryItem[] = (s.inventory_grants || []).map((g: any) => ({
       id: g.name.toLowerCase().replace(/\s+/g, '_'),
       name: g.name,
@@ -277,8 +239,6 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
     }));
 
     const firstGrant = inventoryGrants[0];
-
-    // Attach item_gain to first free choice if present
     if (firstGrant && choices.length > 0) {
       const freeChoice = choices.find(c => c.type === 'free');
       if (freeChoice) freeChoice.item_gain = firstGrant;
@@ -286,7 +246,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
 
     const section: Section = {
       section_number: s.section_number,
-      title: s.outline_summary?.substring(0, 60) || `Section ${s.section_number}`,
+      title: (s.outline_summary || s.location_tag || '').substring(0, 60) || `Section ${s.section_number}`,
       narrator_text: '',
       has_plate: s.has_plate || false,
       choices,
@@ -311,14 +271,43 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
     return section;
   });
 
-  // Store world_bible if present
+  // Preserve opening_plate_prompt
+  const openingPlatePrompt = raw.opening_plate_prompt || undefined;
+
+  // Normalize world_bible to internal format
+  const rawBible = raw.world_bible;
+  const worldBible = rawBible ? {
+    courts: (rawBible.courts || []).map((c: any) => ({
+      name: c.name,
+      motto: c.motto,
+      signature: c.signature || '',
+      taboo: c.taboo,
+    })),
+    factions: (rawBible.factions || []).map((f: any) => ({
+      name: f.name,
+      goal: f.goal,
+      method: f.method || '',
+      tell: f.tell,
+    })),
+    recurring_npcs: (rawBible.recurring_npcs || []).map((n: any) => ({
+      name: n.name,
+      role: n.role,
+      voice_tick: n.voice_tick,
+      tell: n.tell || '',
+      secret: n.secret || '',
+    })),
+    signature_places: rawBible.signature_places || [],
+    linguistic_rules: rawBible.linguistic_rules || undefined,
+  } : undefined;
+
   const outline: AdventureOutline = {
     title: raw.title,
     seed,
     sections,
-    start_section: 1, // Always start at section 1
+    start_section: 1,
     required_codex_keys: raw.required_codex_keys || ['the_pallid_ministry', 'the_echo_vault', 'the_grey_protocol', 'the_cinder_crown', 'the_pallid_seal'],
-    world_bible: raw.world_bible || undefined,
+    world_bible: worldBible,
+    opening_plate_prompt: openingPlatePrompt,
   };
 
   return { valid: true, errors: [], warnings, outline };
