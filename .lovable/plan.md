@@ -1,53 +1,78 @@
 
-Diagnosis (confirmed):
-- Yes — those 3 first-page choices are from the deterministic fallback defaults.
-- I verified your current run (`22c82a09-933a-47d1-8a08-13b197508628`) in the database:
-  - `section_count = 28` (fallback shape, not LLM slim outline)
-  - first 3 labels are exactly:
-    1) Enter through the main gates
-    2) Look for a servant’s entrance
-    3) Scale the wall
-- I also checked recent runs: all recent runs have `section_count = 28` and the same first choice label, so fallback is happening every time.
+Diagnosis (from logs/data I checked)
+1) Timeout is real and consistent:
+- `POST /functions/v1/generate-outline` returns `504` with `{"error":"timeout","timing":{"wall_clock_ms":45003}}`.
+- That means the backend hard wall clock (45s) is tripping before a valid outline is returned.
 
-Why this is still happening:
-- `generate-outline` function logs show:
-  - AI headers returned quickly (~20s)
-  - but total function completion was ~117s
-- Client waits only 60s before giving up and switching to fallback.
-- So your app times out client-side before the backend finishes, then stores the fallback outline (hence repeated default choices).
+2) The repeated first-page choices are definitely fallback content:
+- Recent `runs` rows all show `section_count = 28` and first choice `"Enter through the main gates"`.
+- That exact label comes from the demo fallback generator, not live outline generation.
 
-Most likely technical cause:
-- The backend timeout guard only covers initial fetch-to-first-response, not full response body consumption/parsing.
-- Large AI response body continues downloading/processing after headers, pushing total runtime past client timeout.
+3) There is no successful “re-fire” after timeout:
+- Current flow in `useGameState` does one attempt, then immediately falls back.
+- So if outline times out once, you always get the same default first page for that run.
 
-Best fix I will implement:
-1) Make backend fail fast on full completion time, not just first byte
-- Add an end-to-end wall-clock timeout around the entire AI call + body read + parse (e.g., 35–45s hard cap).
-- Return explicit timeout error if full JSON isn’t complete in time.
+4) Edge log visibility is currently poor:
+- Direct edge-log query returned empty, but network + DB evidence is sufficient to confirm timeout + fallback behavior.
 
-2) Force smaller output further to complete under that cap
-- Reduce target section range to a tighter band (e.g., 45–65) in prompt + validator expectations.
-- Keep compact keys and strict short-string limits.
-- Remove/trim any optional fields that still bloat payload in the response body.
+Proposed fix (target: eliminate timeout pain and eliminate “same 3 choices”)
+A) Split startup generation into a fast minimal outline + on-demand enrichment
+- Change `generate-outline` to return a much smaller startup graph (e.g., 12–18 sections, 2 choices each, minimal fields only) within ~15–25s.
+- Keep current `generate-section` for rich prose on demand.
+- Optionally add “expand-outline” backend function that grows the graph in the background when player reaches deeper nodes.
 
-3) Add explicit fallback reason tracking
-- Write a small `outline_source` + `fallback_reason` marker into run metadata/log_json when fallback is used.
-- This makes it immediately visible whether a run is LLM or default, and why.
+B) Remove heavy fields from startup payload
+- In startup outline generation, drop/trim expensive fields:
+  - no full world-bible synthesis at startup (or use a tiny static/seeded scaffold)
+  - no inventory object arrays unless strictly needed for first act
+  - keep only: `title`, `start_section`, `sections[n, beat, choices(nx/ok/no,type)]`, `opening_plate_prompt`
+- This is the largest latency win.
 
-4) Prevent “silent default-looking success”
-- If fallback is used, show a clear in-app notice (“Used quick fallback due to timeout”) so it’s not mistaken for normal generation.
+C) Add adaptive timeout ladder instead of single hard failure
+- In `generate-outline`:
+  - Try “standard compact” for up to ~25s.
+  - If not complete, abort and run “ultra-compact emergency prompt” for up to ~10s.
+  - Return whichever succeeds first.
+- Do not return 504 unless both tiers fail.
 
-5) Verify with instrumentation
-- Log:
-  - ai_headers_ms
-  - ai_body_ms
-  - parse_ms
-  - total_ms
-  - client_abort_ms
-- Success criteria:
-  - first page no longer defaults in normal runs
-  - LLM runs complete before client timeout
-  - fallback (if any) is clearly labeled and fast
+D) Replace deterministic demo fallback with seeded “quick AI fallback”
+- If both tiers fail, call a tiny emergency prompt (6–10 sections) instead of static `demoOutlineGenerator`.
+- This prevents identical “same 3 choices” runs and keeps experience variable.
 
-Immediate answer to your question:
-- Yes, those three are defaults from fallback. The LLM outline is still not completing within the client’s wait window, so the app is reverting to the demo outline.
+E) Persist source + reason metadata for observability
+- On run creation, write:
+  - `outline_source: 'primary' | 'degraded' | 'emergency' | 'demo'`
+  - `outline_failure_reason: 'timeout_primary' | 'timeout_all' | 'validation' | ...`
+  - timing fields (`headers_ms`, `body_ms`, `parse_ms`, `total_ms`)
+- Show this in `run_state.log_json` and console to make diagnosis immediate.
+
+F) Relax validation where it doesn’t block play
+- Keep fatal checks only for true blockers (missing sections/start/broken shape).
+- Convert noncritical constraints (ending count, distribution targets) to warnings.
+- Auto-repair links (already present) and continue.
+
+Files to update
+1) `supabase/functions/generate-outline/index.ts`
+- Implement two-tier generation strategy and smaller startup schema.
+- Add strict aborts for each tier and richer timing/failure metadata in response.
+
+2) `src/lib/llmService.ts`
+- Handle multi-tier success payload and preserve source/reason/timing.
+- If backend returns degraded outline, proceed (don’t treat as failure).
+
+3) `src/hooks/useGameState.tsx`
+- Save `outline_source` and `outline_failure_reason` into `run_state.log_json`.
+- Replace static fallback call path with emergency mini-outline path.
+
+4) `src/lib/outlineValidator.ts`
+- Add support for “startup minimal” outline schema.
+- Keep essential integrity checks, downgrade noncritical checks to warnings.
+
+5) (Optional) `supabase/functions/expand-outline/index.ts` + client hook
+- Expand graph progressively after run starts, so user never waits on a big upfront payload.
+
+Acceptance criteria
+- New run starts in under 30s in normal conditions.
+- First page is no longer the same 3 deterministic fallback choices across runs.
+- Timeout incidents still allow a non-static emergency outline.
+- Metadata clearly shows whether run used primary/degraded/emergency path and why.
