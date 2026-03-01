@@ -122,8 +122,8 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
     ? raw.sections.map(normalizeSlimSection)
     : raw.sections;
 
-  // Section count: 20-150 (relaxed to accept more outlines)
-  if (normalizedSections.length < 20) errors.push(`Too few sections: ${normalizedSections.length} (need at least 20)`);
+  // Section count: 5-150 (relaxed to accept emergency outlines)
+  if (normalizedSections.length < 5) errors.push(`Too few sections: ${normalizedSections.length} (need at least 5)`);
   if (normalizedSections.length > 150) warnings.push(`High section count: ${normalizedSections.length}`);
 
   // Unique section numbers in 1..400
@@ -187,8 +187,8 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
   if (nums.has(raw.start_section) && errors.length === 0) {
     const reachable = computeReachability(normalizedSections, raw.start_section);
     const reachPct = reachable.size / nums.size;
-    if (reachPct < 0.85) {
-      errors.push(`Only ${Math.round(reachPct * 100)}% sections reachable from start (need 85%)`);
+  if (reachPct < 0.60) {
+      errors.push(`Only ${Math.round(reachPct * 100)}% sections reachable from start (need 60%)`);
     }
   }
 

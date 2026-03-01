@@ -6,36 +6,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const OUTLINE_SYSTEM_PROMPT = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Return JSON ONLY. No markdown. No explanations.
-
-You MUST produce 30-40 sections. No more. No less.
+// ─── TIER 1: Primary compact prompt (target: 15-25 sections) ───
+const PRIMARY_SYSTEM = `You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook. Return JSON ONLY. No markdown.
 
 HARD RULES:
 - Stats: STEEL, GUILE, WITS, GRACE, HEX
 - TN: 2-10, pools: 1-8, enemy hp: 2-12
-- stakes MUST be one of: "safe"|"risky"|"bleak"|"tempting"|"unknown"
+- stakes: "safe"|"risky"|"bleak"|"tempting"|"unknown"
 - Item tags: Sharp, Key, Ranged, Light, Holy, Poison, Coin, Seal, or "Clue:*"
-- beat: max 60 characters. label: max 30 characters. No prose anywhere.
-- Keep ALL strings as short as possible. Brevity is mandatory.
+- ALL strings under 40 chars. Brevity mandatory.
 
 STRUCTURE:
-- 30-40 sections ONLY. Section numbers: unique integers 1..100.
-- Every non-death/non-ending section: 2 choices (not 3).
-- ALL nx/ok/no values MUST point to existing section n values. ZERO broken links.
+- 15-25 sections. Section numbers: 1..50.
+- Every non-death/non-ending section: 2 choices.
+- ALL nx/ok/no MUST point to existing section n values. ZERO broken links.
 - start_section MUST be 1.
-- 3-5 combat, 4-6 WITS tests, 3-5 GUILE tests, 2-4 HEX tests.
-- 2-4 gated choices, 4-6 clue items (Clue:* tags).
-- 3-4 endings, exactly 1 true ending (true_end=true).
-- Exactly 1 twist section in Act II.
-- Start section MUST have plate=true.
+- 2-3 combat, 2-4 tests, 1-2 gated, 2-4 clue items.
+- 2-3 endings, exactly 1 true ending.
+- 1 twist in Act II. Start section plate=true.
 
-WORLD BIBLE (compact):
-- 3 courts: {name, motto, taboo} — each field max 50 chars
-- 4 factions: {name, goal, tell} — each field max 50 chars
-- 3 recurring_npcs: {name, role, voice_tick, tell} — each field max 50 chars
-- 6 signature_places: {name, one_line} — each field max 50 chars
-
-OUTPUT exactly this JSON shape:
+OUTPUT this JSON shape ONLY:
 {
   "title": string,
   "seed": string,
@@ -49,28 +39,17 @@ OUTPUT exactly this JSON shape:
   },
   "sections": [
     {
-      "n": number,
-      "loc": string,
-      "beat": string,
-      "plate": boolean,
-      "boss": boolean,
-      "death": boolean,
-      "end": boolean,
-      "end_key": string|null,
-      "true_end": boolean,
-      "twist": boolean,
-      "twist_type": string|null,
-      "act": "I"|"II"|"III",
-      "codex": string|null,
+      "n": number, "loc": string, "beat": string, "plate": boolean,
+      "boss": boolean, "death": boolean, "end": boolean,
+      "end_key": string|null, "true_end": boolean,
+      "twist": boolean, "twist_type": string|null,
+      "act": "I"|"II"|"III", "codex": string|null,
       "inv": [{"name":string,"tags":string[],"clue":boolean}],
       "choices": [
         {
-          "id": string,
-          "label": string,
+          "id": string, "label": string,
           "t": "free"|"test"|"combat"|"gated",
-          "nx": number|null,
-          "ok": number|null,
-          "no": number|null,
+          "nx": number|null, "ok": number|null, "no": number|null,
           "test": {"stat":string,"tn":number,"opp":number,"stakes":string,"fx_ok":null,"fx_no":null}|null,
           "gate": {"tag":string}|{"codex":string}|{"clues":string[],"min":number}|null,
           "enemy": {"name":string,"pool":number,"tn":number,"hp":number,"eng":number,"boss":boolean}|null
@@ -81,7 +60,23 @@ OUTPUT exactly this JSON shape:
   "opening_plate_prompt": string
 }
 
-opening_plate_prompt: REQUIRED. Max 80 chars. Gritty ink-wash illustration of the opening scene. Style: "black ink wash, crosshatch, gothic". No text in image.`;
+opening_plate_prompt: max 60 chars. "black ink wash, crosshatch, gothic" style.`;
+
+// ─── TIER 2: Emergency ultra-compact (target: 8-12 sections) ───
+const EMERGENCY_SYSTEM = `You are a fast outline generator for "The Gloam Courts" gamebook. Return JSON ONLY. No markdown.
+
+Rules: Stats STEEL/GUILE/WITS/GRACE/HEX. TN 2-10. Stakes: safe|risky|bleak|tempting|unknown.
+
+Generate EXACTLY 8-12 sections. 2 choices each. Section numbers 1..20. start_section=1. 1-2 endings, 1 true ending. Keep ALL strings under 30 chars.
+
+JSON shape:
+{
+  "title": string, "seed": string, "start_section": 1,
+  "required_codex_keys": [],
+  "world_bible": {"courts":[],"factions":[],"recurring_npcs":[],"signature_places":[]},
+  "sections": [{"n":number,"loc":string,"beat":string,"plate":boolean,"boss":boolean,"death":boolean,"end":boolean,"end_key":null,"true_end":boolean,"twist":boolean,"twist_type":null,"act":"I"|"II"|"III","codex":null,"inv":[],"choices":[{"id":string,"label":string,"t":"free"|"test"|"combat","nx":number|null,"ok":number|null,"no":number|null,"test":null,"gate":null,"enemy":null}]}],
+  "opening_plate_prompt": string
+}`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -103,7 +98,6 @@ serve(async (req) => {
     if (userErr || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
-    const userId = user.id;
 
     const { seed } = await req.json();
     if (!seed) {
@@ -115,11 +109,11 @@ serve(async (req) => {
     const { count } = await supabase
       .from("runs")
       .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
+      .eq("user_id", user.id)
       .gte("created_at", oneDayAgo);
 
     if ((count || 0) >= 10) {
-      return new Response(JSON.stringify({ error: "rate_limited", message: "Maximum 10 runs per day. The Courts need rest." }), {
+      return new Response(JSON.stringify({ error: "rate_limited", message: "Maximum 10 runs per day." }), {
         status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -129,71 +123,106 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "AI not configured" }), { status: 500, headers: corsHeaders });
     }
 
-    // Fetch required codex keys
     const { data: codexKeys } = await supabase
       .from("codex_entries")
       .select("codex_key")
       .eq("is_true_ending_required", true);
     const requiredKeys = (codexKeys || []).map((k: any) => k.codex_key).slice(0, 5);
 
-    const outlinePrompt = `Generate the slim outline for seed: "${seed}".
-Required codex keys for true ending: ${JSON.stringify(requiredKeys)}
-IMPORTANT: Exactly 30-40 sections. 2 choices per section. Keep ALL strings under 50 chars. Return ONLY JSON, no markdown.`;
-
-    console.log("Generating slim outline for seed:", seed);
     const wallClockStart = Date.now();
 
-    // ====== HARD WALL-CLOCK TIMEOUT: 45s for entire AI call + body + parse ======
-    const WALL_CLOCK_LIMIT_MS = 45_000;
+    // ═══════════ TIER 1: Primary compact (25s budget) ═══════════
+    const primaryPrompt = `Outline for seed: "${seed}". Codex keys: ${JSON.stringify(requiredKeys)}. 15-25 sections, 2 choices each. Strings under 40 chars. JSON only.`;
+    
+    console.log(`[T1] Starting primary generation for: ${seed}`);
+    let outline: any = null;
+    let outlineSource = "primary";
+    let failureReason: string | null = null;
+    let t1Ms = 0;
+    let t2Ms = 0;
 
-    let outline: any;
     try {
       outline = await Promise.race([
-        callAIAndParse(LOVABLE_API_KEY, outlinePrompt),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("WALL_CLOCK_TIMEOUT")), WALL_CLOCK_LIMIT_MS)
-        ),
+        callAI(LOVABLE_API_KEY, PRIMARY_SYSTEM, primaryPrompt, "google/gemini-2.5-flash-lite"),
+        timeout(25_000, "T1_TIMEOUT"),
       ]);
+      t1Ms = Date.now() - wallClockStart;
+      console.log(`[T1] Completed in ${t1Ms}ms, sections: ${outline?.sections?.length}`);
     } catch (err: any) {
-      const elapsed = Date.now() - wallClockStart;
-      if (err.message === "WALL_CLOCK_TIMEOUT") {
-        console.error(`Wall-clock timeout after ${elapsed}ms`);
-        return new Response(JSON.stringify({
-          error: "timeout",
-          message: "The Author's quill moved too slowly. Try again.",
-          timing: { wall_clock_ms: elapsed },
-        }), { status: 504, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      t1Ms = Date.now() - wallClockStart;
+      failureReason = err.message || "T1_UNKNOWN";
+      console.warn(`[T1] Failed after ${t1Ms}ms: ${failureReason}`);
+    }
+
+    // Validate T1 result
+    if (outline) {
+      const v = validateAndRepairOutline(outline, 10);
+      if (v.fatal) {
+        console.warn(`[T1] Validation fatal: ${v.errors.join("; ")}`);
+        failureReason = `T1_VALIDATION: ${v.errors[0]}`;
+        outline = null;
+      } else {
+        if (v.warnings.length > 0) console.warn("[T1] Warnings:", v.warnings);
+        if (v.repaired > 0) console.log(`[T1] Auto-repaired ${v.repaired} links`);
       }
-      throw err;
     }
 
-    const aiElapsed = Date.now() - wallClockStart;
-    console.log(`AI call + parse completed in ${aiElapsed}ms`);
+    // ═══════════ TIER 2: Emergency ultra-compact (15s budget) ═══════════
+    if (!outline) {
+      outlineSource = "emergency";
+      const emergencyPrompt = `Quick outline for: "${seed}". 8-12 sections. 2 choices. Very short strings. JSON only.`;
+      const t2Start = Date.now();
+      
+      console.log(`[T2] Starting emergency generation`);
+      try {
+        outline = await Promise.race([
+          callAI(LOVABLE_API_KEY, EMERGENCY_SYSTEM, emergencyPrompt, "google/gemini-2.5-flash-lite"),
+          timeout(15_000, "T2_TIMEOUT"),
+        ]);
+        t2Ms = Date.now() - t2Start;
+        console.log(`[T2] Completed in ${t2Ms}ms, sections: ${outline?.sections?.length}`);
+      } catch (err: any) {
+        t2Ms = Date.now() - t2Start;
+        failureReason = `${failureReason}; ${err.message || "T2_UNKNOWN"}`;
+        console.error(`[T2] Failed after ${t2Ms}ms: ${err.message}`);
+      }
 
-    // Ensure seed and required keys
+      // Validate T2 with lower bar (minimum 5 sections)
+      if (outline) {
+        const v = validateAndRepairOutline(outline, 5);
+        if (v.fatal) {
+          console.error(`[T2] Validation fatal: ${v.errors.join("; ")}`);
+          failureReason = `${failureReason}; T2_VALIDATION: ${v.errors[0]}`;
+          outline = null;
+        }
+      }
+    }
+
+    // ═══════════ BOTH TIERS FAILED ═══════════
+    if (!outline) {
+      const elapsed = Date.now() - wallClockStart;
+      console.error(`[OUTLINE] Both tiers failed after ${elapsed}ms. Reason: ${failureReason}`);
+      return new Response(JSON.stringify({
+        error: "generation_failed",
+        message: "Both generation tiers failed. Client should use local fallback.",
+        outline_source: "none",
+        failure_reason: failureReason,
+        timing: { t1_ms: t1Ms, t2_ms: t2Ms, total_ms: elapsed },
+      }), { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ═══════════ SUCCESS ═══════════
     outline.seed = seed;
-    if (requiredKeys.length > 0) {
-      outline.required_codex_keys = requiredKeys;
-    }
+    if (requiredKeys.length > 0) outline.required_codex_keys = requiredKeys;
 
-    // Server-side validation with auto-repair
-    const result = validateAndRepairOutline(outline);
-    if (result.fatal) {
-      console.error("Outline fatal errors:", result.errors);
-      return new Response(JSON.stringify({ error: "validation_error", message: "The outline had fatal structural problems.", details: result.errors }), {
-        status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (result.warnings.length > 0) console.warn("Outline warnings:", result.warnings);
-    if (result.repaired > 0) console.log(`Auto-repaired ${result.repaired} broken links`);
-
-    const totalElapsed = Date.now() - wallClockStart;
-    console.log(`Outline validated: ${outline.sections.length} sections, total: ${totalElapsed}ms`);
+    const totalMs = Date.now() - wallClockStart;
+    console.log(`[OUTLINE] Success via ${outlineSource}: ${outline.sections.length} sections in ${totalMs}ms`);
 
     return new Response(JSON.stringify({
       outline,
-      timing: { outline_ms: aiElapsed, total_ms: totalElapsed },
+      outline_source: outlineSource,
+      failure_reason: outlineSource === "emergency" ? failureReason : null,
+      timing: { t1_ms: t1Ms, t2_ms: t2Ms, total_ms: totalMs },
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -205,56 +234,51 @@ IMPORTANT: Exactly 30-40 sections. 2 choices per section. Keep ALL strings under
   }
 });
 
-/** Fetches AI, reads full body, parses JSON — all as one awaitable unit */
-async function callAIAndParse(apiKey: string, prompt: string): Promise<any> {
-  const t0 = Date.now();
+function timeout(ms: number, label: string): Promise<never> {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms));
+}
 
+async function callAI(apiKey: string, system: string, prompt: string, model: string): Promise<any> {
+  const t0 = Date.now();
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "google/gemini-2.5-flash-lite",
+      model,
       messages: [
-        { role: "system", content: OUTLINE_SYSTEM_PROMPT },
+        { role: "system", content: system },
         { role: "user", content: prompt },
       ],
-      temperature: 0.1,
+      temperature: 0.15,
     }),
   });
 
-  const headersMs = Date.now() - t0;
-  console.log(`AI headers in ${headersMs}ms, status: ${response.status}`);
-
+  console.log(`  AI headers: ${Date.now() - t0}ms, status: ${response.status}`);
   if (!response.ok) {
     const errText = await response.text();
-    console.error("AI gateway error:", response.status, errText);
+    console.error("AI error:", response.status, errText);
     throw new Error(`AI_HTTP_${response.status}`);
   }
 
-  // Read full body
   const data = await response.json();
-  const bodyMs = Date.now() - t0;
-  console.log(`AI full body in ${bodyMs}ms`);
+  console.log(`  AI body: ${Date.now() - t0}ms`);
 
   let content = data.choices?.[0]?.message?.content || "";
   content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
   if (!content.startsWith("{")) {
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) content = jsonMatch[0];
+    const m = content.match(/\{[\s\S]*\}/);
+    if (m) content = m[0];
   }
 
   try {
     return JSON.parse(content);
   } catch {
-    console.error("Failed to parse outline JSON:", content.substring(0, 300));
+    console.error("Parse failed:", content.substring(0, 200));
     throw new Error("PARSE_ERROR");
   }
 }
 
-function validateAndRepairOutline(o: any): { fatal: boolean; errors: string[]; warnings: string[]; repaired: number } {
+function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean; errors: string[]; warnings: string[]; repaired: number } {
   const errors: string[] = [];
   const warnings: string[] = [];
   let repaired = 0;
@@ -262,22 +286,16 @@ function validateAndRepairOutline(o: any): { fatal: boolean; errors: string[]; w
   if (!o || typeof o !== "object") return { fatal: true, errors: ["Not an object"], warnings, repaired };
   if (!o.title) errors.push("Missing title");
   if (!o.start_section) errors.push("Missing start_section");
-  if (!Array.isArray(o.sections)) return { fatal: true, errors: ["sections is not an array"], warnings, repaired };
-  
-  if (o.sections.length < 20) {
-    errors.push(`Too few sections: ${o.sections.length} (need at least 20)`);
+  if (!Array.isArray(o.sections)) return { fatal: true, errors: ["sections not array"], warnings, repaired };
+  if (o.sections.length < minSections) {
+    errors.push(`Too few sections: ${o.sections.length} (need ${minSections})`);
     return { fatal: true, errors, warnings, repaired };
   }
-  
-  if (o.sections.length < 30) warnings.push(`Low section count: ${o.sections.length}`);
-  if (o.sections.length > 120) warnings.push(`High section count: ${o.sections.length}`);
-  if (!o.opening_plate_prompt) warnings.push("Missing opening_plate_prompt");
 
   const nums = new Set<number>();
   for (const s of o.sections) {
     const sn = s.n ?? s.section_number;
     if (typeof sn !== "number") { errors.push("Section missing n"); continue; }
-    if (nums.has(sn)) warnings.push(`Duplicate section: ${sn}`);
     nums.add(sn);
   }
 
@@ -288,8 +306,7 @@ function validateAndRepairOutline(o: any): { fatal: boolean; errors: string[]; w
 
   const sortedNums = Array.from(nums).sort((a, b) => a - b);
   function findNearest(target: number): number {
-    let best = sortedNums[0];
-    let bestDist = Math.abs(target - best);
+    let best = sortedNums[0], bestDist = Math.abs(target - best);
     for (const n of sortedNums) {
       const d = Math.abs(target - n);
       if (d < bestDist) { best = n; bestDist = d; }
@@ -299,21 +316,12 @@ function validateAndRepairOutline(o: any): { fatal: boolean; errors: string[]; w
 
   for (const s of o.sections) {
     for (const c of (s.choices || [])) {
-      for (const key of ["nx", "ok", "no", "next_section", "success_section", "fail_section"]) {
+      for (const key of ["nx", "ok", "no"]) {
         const val = c[key];
-        if (val != null && !nums.has(val)) {
-          c[key] = findNearest(val);
-          repaired++;
-        }
+        if (val != null && !nums.has(val)) { c[key] = findNearest(val); repaired++; }
       }
     }
   }
 
-  const endings = o.sections.filter((s: any) => s.end || s.is_ending);
-  if (endings.length < 3) warnings.push(`Only ${endings.length} endings`);
-  const trueEndings = o.sections.filter((s: any) => s.true_end || s.is_true_ending);
-  if (trueEndings.length !== 1) warnings.push(`${trueEndings.length} true endings`);
-
-  const fatal = errors.length > 0;
-  return { fatal, errors, warnings, repaired };
+  return { fatal: errors.length > 0, errors, warnings, repaired };
 }

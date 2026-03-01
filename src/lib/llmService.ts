@@ -15,17 +15,25 @@ async function getAuthHeaders() {
   };
 }
 
+export interface OutlineResult {
+  outline: AdventureOutline;
+  source: 'primary' | 'emergency' | 'demo';
+  failureReason?: string | null;
+  timing?: Record<string, number>;
+}
+
 export async function generateLLMOutline(
   seed: string,
   onStage?: (stage: string) => void,
-): Promise<AdventureOutline | null> {
+): Promise<OutlineResult | null> {
   try {
     onStage?.('summoning');
     const headers = await getAuthHeaders();
 
     onStage?.('plotting');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000); // 60s client timeout
+    // 50s client timeout — backend has 25s + 15s tiers
+    const timeout = setTimeout(() => controller.abort(), 50_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
@@ -37,9 +45,12 @@ export async function generateLLMOutline(
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ message: 'Unknown error' }));
       console.error('[Outline] Generation failed:', resp.status, JSON.stringify(err));
-      if (err.details) console.error('[Outline] Validation details:', err.details);
       if (resp.status === 429) {
         toast({ title: 'Rate Limited', description: err.message || 'Too many runs today.', variant: 'destructive' });
+      }
+      // 503 means both tiers failed — client should use local fallback
+      if (resp.status === 503) {
+        console.warn('[Outline] Both server tiers failed:', err.failure_reason);
       }
       return null;
     }
@@ -47,10 +58,11 @@ export async function generateLLMOutline(
     onStage?.('binding');
     const respJson = await resp.json();
     const raw = respJson.outline;
+    const outlineSource = respJson.outline_source || 'primary';
     const timing = respJson.timing;
     
-    if (timing?.outline_ms) {
-      console.log(`[Telemetry] outline_ms: ${timing.outline_ms}`);
+    if (timing) {
+      console.log(`[Telemetry] source=${outlineSource} t1=${timing.t1_ms}ms t2=${timing.t2_ms}ms total=${timing.total_ms}ms`);
     }
     
     const result = validateAndConvertOutline(raw, seed);
@@ -66,7 +78,12 @@ export async function generateLLMOutline(
     }
 
     onStage?.('sealing');
-    return result.outline;
+    return {
+      outline: result.outline,
+      source: outlineSource as 'primary' | 'emergency',
+      failureReason: respJson.failure_reason,
+      timing,
+    };
   } catch (e) {
     console.error('generateLLMOutline error:', e);
     return null;
