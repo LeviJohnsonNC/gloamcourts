@@ -28,14 +28,11 @@ export function useGameState() {
     setOutlineStage('summoning');
 
     let adventure: AdventureOutline | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        adventure = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
-        if (adventure) break;
-      } catch (e) {
-        console.error(`LLM outline attempt ${attempt + 1} failed:`, e);
-        if (attempt === 0) setOutlineStage('summoning');
-      }
+    // Single attempt only — edge function has 30s timeout, client has 60s timeout
+    try {
+      adventure = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
+    } catch (e) {
+      console.error('[Outline] LLM outline failed:', e);
     }
 
     if (!adventure) {

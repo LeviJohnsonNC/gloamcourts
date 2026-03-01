@@ -141,21 +141,39 @@ Return ONLY the JSON object. No markdown fences. No explanation.`;
     console.log("Generating slim outline for seed:", seed);
     const startMs = Date.now();
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: OUTLINE_SYSTEM_PROMPT },
-          { role: "user", content: outlinePrompt },
-        ],
-        temperature: 0.1,
-      }),
-    });
+    // 30-second timeout on AI fetch to fail fast
+    const abortController = new AbortController();
+    const fetchTimeout = setTimeout(() => abortController.abort(), 30_000);
+
+    let response: Response;
+    try {
+      response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: OUTLINE_SYSTEM_PROMPT },
+            { role: "user", content: outlinePrompt },
+          ],
+          temperature: 0.1,
+        }),
+        signal: abortController.signal,
+      });
+    } catch (fetchErr: any) {
+      clearTimeout(fetchTimeout);
+      if (fetchErr.name === "AbortError") {
+        console.error("AI fetch timed out after 30s");
+        return new Response(JSON.stringify({ error: "timeout", message: "The Author took too long. Try again." }), {
+          status: 504, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      throw fetchErr;
+    }
+    clearTimeout(fetchTimeout);
 
     const elapsedMs = Date.now() - startMs;
     console.log(`AI response received in ${elapsedMs}ms`);
@@ -202,13 +220,20 @@ Return ONLY the JSON object. No markdown fences. No explanation.`;
       outline.required_codex_keys = requiredKeys;
     }
 
-    // Server-side validation
-    const errors = validateSlimOutline(outline);
-    if (errors.length > 0) {
-      console.error("Outline validation errors:", errors);
-      return new Response(JSON.stringify({ error: "validation_error", message: "The outline had structural problems.", details: errors }), {
+    // Server-side validation with auto-repair
+    const result = validateAndRepairOutline(outline);
+    if (result.fatal) {
+      console.error("Outline fatal errors:", result.errors);
+      return new Response(JSON.stringify({ error: "validation_error", message: "The outline had fatal structural problems.", details: result.errors }), {
         status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    if (result.warnings.length > 0) {
+      console.warn("Outline warnings (non-fatal):", result.warnings);
+    }
+    if (result.repaired > 0) {
+      console.log(`Auto-repaired ${result.repaired} broken links`);
     }
 
     console.log(`Outline validated: ${outline.sections.length} sections, elapsed total: ${Date.now() - startMs}ms`);
@@ -224,44 +249,74 @@ Return ONLY the JSON object. No markdown fences. No explanation.`;
   }
 });
 
-function validateSlimOutline(o: any): string[] {
+function validateAndRepairOutline(o: any): { fatal: boolean; errors: string[]; warnings: string[]; repaired: number } {
   const errors: string[] = [];
-  if (!o || typeof o !== "object") { errors.push("Not an object"); return errors; }
+  const warnings: string[] = [];
+  let repaired = 0;
+
+  if (!o || typeof o !== "object") { return { fatal: true, errors: ["Not an object"], warnings, repaired }; }
   if (!o.title) errors.push("Missing title");
   if (!o.start_section) errors.push("Missing start_section");
-  if (!o.opening_plate_prompt) errors.push("Missing opening_plate_prompt");
-  if (!Array.isArray(o.sections)) { errors.push("sections is not an array"); return errors; }
-  if (o.sections.length < 40) errors.push(`Too few sections: ${o.sections.length} (need 40-120)`);
-  if (o.sections.length > 120) errors.push(`Too many sections: ${o.sections.length} (need 40-120)`);
+  if (!Array.isArray(o.sections)) { return { fatal: true, errors: ["sections is not an array"], warnings, repaired }; }
+  
+  // Fatal: need at least 20 sections to be playable
+  if (o.sections.length < 20) {
+    errors.push(`Too few sections: ${o.sections.length} (need at least 20)`);
+    return { fatal: true, errors, warnings, repaired };
+  }
+  
+  // Warning-level section count checks
+  if (o.sections.length < 30) warnings.push(`Low section count: ${o.sections.length} (ideal 60-90)`);
+  if (o.sections.length > 120) warnings.push(`High section count: ${o.sections.length} (ideal 60-90)`);
+
+  // Missing opening_plate_prompt is a warning, not fatal
+  if (!o.opening_plate_prompt) warnings.push("Missing opening_plate_prompt");
 
   const nums = new Set<number>();
   for (const s of o.sections) {
     const sn = s.n ?? s.section_number;
     if (typeof sn !== "number") { errors.push("Section missing n"); continue; }
-    if (nums.has(sn)) errors.push(`Duplicate section: ${sn}`);
+    if (nums.has(sn)) warnings.push(`Duplicate section: ${sn}`);
     nums.add(sn);
   }
 
-  if (!nums.has(o.start_section)) errors.push(`start_section ${o.start_section} not in sections`);
+  if (!nums.has(o.start_section)) {
+    errors.push(`start_section ${o.start_section} not in sections`);
+    return { fatal: true, errors, warnings, repaired };
+  }
 
-  // ZERO broken links
-  let brokenLinks = 0;
+  // Auto-repair broken links: redirect to nearest valid section
+  const sortedNums = Array.from(nums).sort((a, b) => a - b);
+  function findNearest(target: number): number {
+    let best = sortedNums[0];
+    let bestDist = Math.abs(target - best);
+    for (const n of sortedNums) {
+      const d = Math.abs(target - n);
+      if (d < bestDist) { best = n; bestDist = d; }
+    }
+    return best;
+  }
+
   for (const s of o.sections) {
     for (const c of (s.choices || [])) {
-      // Slim format uses nx/ok/no
       for (const key of ["nx", "ok", "no", "next_section", "success_section", "fail_section"]) {
         const val = c[key];
-        if (val != null && !nums.has(val)) brokenLinks++;
+        if (val != null && !nums.has(val)) {
+          const fixed = findNearest(val);
+          c[key] = fixed;
+          repaired++;
+        }
       }
     }
   }
-  if (brokenLinks > 0) errors.push(`${brokenLinks} broken section links (must be 0)`);
 
-  // Endings
+  // Endings: downgrade to warnings instead of errors
   const endings = o.sections.filter((s: any) => s.end || s.is_ending);
-  if (endings.length < 5) errors.push(`Only ${endings.length} endings (need 5-8)`);
+  if (endings.length < 3) warnings.push(`Only ${endings.length} endings (want 5-8, min 3)`);
   const trueEndings = o.sections.filter((s: any) => s.true_end || s.is_true_ending);
-  if (trueEndings.length !== 1) errors.push(`${trueEndings.length} true endings (need exactly 1)`);
+  if (trueEndings.length !== 1) warnings.push(`${trueEndings.length} true endings (want exactly 1)`);
 
-  return errors;
+  // Fatal only if we have hard errors (missing title, start_section not found, too few sections)
+  const fatal = errors.length > 0;
+  return { fatal, errors, warnings, repaired };
 }
