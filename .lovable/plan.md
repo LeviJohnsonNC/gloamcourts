@@ -1,16 +1,53 @@
-## Fix Status: Implemented
 
-### Changes Made
+Diagnosis (confirmed):
+- Yes — those 3 first-page choices are from the deterministic fallback defaults.
+- I verified your current run (`22c82a09-933a-47d1-8a08-13b197508628`) in the database:
+  - `section_count = 28` (fallback shape, not LLM slim outline)
+  - first 3 labels are exactly:
+    1) Enter through the main gates
+    2) Look for a servant’s entrance
+    3) Scale the wall
+- I also checked recent runs: all recent runs have `section_count = 28` and the same first choice label, so fallback is happening every time.
 
-1. **Edge function `generate-outline`**: Added 30s AbortController timeout on AI fetch. Relaxed validation — auto-repairs broken links (redirects to nearest valid section), lowered minimum sections to 20 (fatal), endings downgraded to warnings. Returns fast on timeout (504) instead of hanging.
+Why this is still happening:
+- `generate-outline` function logs show:
+  - AI headers returned quickly (~20s)
+  - but total function completion was ~117s
+- Client waits only 60s before giving up and switching to fallback.
+- So your app times out client-side before the backend finishes, then stores the fallback outline (hence repeated default choices).
 
-2. **Client `llmService.ts`**: Reduced timeout from 180s to 60s. Added detailed error logging (validation details printed to console).
+Most likely technical cause:
+- The backend timeout guard only covers initial fetch-to-first-response, not full response body consumption/parsing.
+- Large AI response body continues downloading/processing after headers, pushing total runtime past client timeout.
 
-3. **Client `useGameState.tsx`**: Removed retry loop — single attempt only. Demo fallback now happens in ~60s max instead of ~6 minutes.
+Best fix I will implement:
+1) Make backend fail fast on full completion time, not just first byte
+- Add an end-to-end wall-clock timeout around the entire AI call + body read + parse (e.g., 35–45s hard cap).
+- Return explicit timeout error if full JSON isn’t complete in time.
 
-4. **Client `outlineValidator.ts`**: Lowered minimum sections from 40 to 20. Auto-repairs broken links instead of hard-failing. Endings/true endings downgraded from errors to warnings. Section count >150 is a warning, not error.
+2) Force smaller output further to complete under that cap
+- Reduce target section range to a tighter band (e.g., 45–65) in prompt + validator expectations.
+- Keep compact keys and strict short-string limits.
+- Remove/trim any optional fields that still bloat payload in the response body.
 
-### Expected Timing
-- Edge function: responds in 10-30s or fails at 30s
-- Client total wait: max 60s before demo fallback
-- Previously: 360s+ (2 attempts × 180s timeout)
+3) Add explicit fallback reason tracking
+- Write a small `outline_source` + `fallback_reason` marker into run metadata/log_json when fallback is used.
+- This makes it immediately visible whether a run is LLM or default, and why.
+
+4) Prevent “silent default-looking success”
+- If fallback is used, show a clear in-app notice (“Used quick fallback due to timeout”) so it’s not mistaken for normal generation.
+
+5) Verify with instrumentation
+- Log:
+  - ai_headers_ms
+  - ai_body_ms
+  - parse_ms
+  - total_ms
+  - client_abort_ms
+- Success criteria:
+  - first page no longer defaults in normal runs
+  - LLM runs complete before client timeout
+  - fallback (if any) is clearly labeled and fast
+
+Immediate answer to your question:
+- Yes, those three are defaults from fallback. The LLM outline is still not completing within the client’s wait window, so the app is reverting to the demo outline.
