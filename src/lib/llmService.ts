@@ -25,7 +25,7 @@ export async function generateLLMOutline(
 
     onStage?.('plotting');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 180_000);
+    const timeout = setTimeout(() => controller.abort(), 60_000); // 60s client timeout
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
@@ -36,7 +36,8 @@ export async function generateLLMOutline(
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ message: 'Unknown error' }));
-      console.error('Outline generation failed:', resp.status, err);
+      console.error('[Outline] Generation failed:', resp.status, JSON.stringify(err));
+      if (err.details) console.error('[Outline] Validation details:', err.details);
       if (resp.status === 429) {
         toast({ title: 'Rate Limited', description: err.message || 'Too many runs today.', variant: 'destructive' });
       }
