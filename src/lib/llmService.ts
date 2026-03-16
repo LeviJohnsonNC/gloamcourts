@@ -91,6 +91,15 @@ export interface CachedSection {
   title: string;
   narrator_text: string;
   choice_flavor: Record<string, string>;
+  choice_mechanics?: Record<string, {
+    t: 'free' | 'test' | 'combat' | 'gated';
+    stat?: string | null;
+    tn?: number | null;
+    opp?: number | null;
+    stakes?: string | null;
+    enemy?: { name: string; pool: number; tn: number; hp: number; eng: number; boss: boolean } | null;
+    gate_tag?: string | null;
+  }>;
   plate_caption: string | null;
   plate_prompt: string | null;
   plate_url: string | null;
