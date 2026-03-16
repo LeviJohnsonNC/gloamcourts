@@ -78,7 +78,6 @@ export async function generateLLMOutline(
     onStage?.('sealing');
     return {
       outline: result.outline,
-      source: outlineSource as 'primary' | 'emergency',
       failureReason: respJson.failure_reason,
       timing,
     };

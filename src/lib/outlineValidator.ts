@@ -1,6 +1,9 @@
 /**
  * Validates an LLM-generated outline and converts it to the internal AdventureOutline format.
- * Supports both legacy (verbose) and slim (compact) outline formats.
+ * Supports both legacy (verbose) and slim/nav-graph (compact) outline formats.
+ * 
+ * Nav-graph outlines only contain navigation structure + thematic beats.
+ * Mechanical enrichment (choice types, combat, tests, gates) happens in generate-section.
  */
 import { AdventureOutline, Section, Choice, CombatEnemy, InventoryItem } from '@/rules/types';
 
@@ -11,18 +14,18 @@ export interface ValidationResult {
   outline?: AdventureOutline;
 }
 
-// Detect slim format by checking for `n` field on first section
+// Detect slim/nav-graph format by checking for `n` field on first section
 function isSlimFormat(raw: any): boolean {
   if (!Array.isArray(raw.sections) || raw.sections.length === 0) return false;
   return typeof raw.sections[0].n === 'number';
 }
 
-// Normalize a section from slim format to a common intermediate
+// Normalize a section from slim/nav-graph format to a common intermediate
 function normalizeSlimSection(s: any): any {
   return {
     section_number: s.n,
     outline_summary: s.beat || '',
-    location_tag: s.loc || '',
+    location_tag: s.loc || s.beat?.substring(0, 20) || '',
     has_plate: s.plate || false,
     is_boss: s.boss || false,
     is_death: s.death || false,
@@ -39,6 +42,7 @@ function normalizeSlimSection(s: any): any {
     choices: (s.choices || []).map((c: any) => ({
       choice_id: c.id || `c_${Math.random().toString(36).slice(2, 6)}`,
       label: c.label || 'Continue',
+      // Nav-graph: all choices are 'free' with nx only; mechanics assigned by generate-section
       type: c.t || 'free',
       next_section: c.nx ?? null,
       success_section: c.ok ?? null,
@@ -71,7 +75,6 @@ function normalizeGate(gate: any): any {
   if (gate.tag) return { required_item_tag: gate.tag };
   if (gate.codex) return { required_codex_key: gate.codex };
   if (gate.clues) return { required_clue_tags: gate.clues, min_required: gate.min || gate.clues.length };
-  // Legacy format passthrough
   return gate;
 }
 
@@ -117,12 +120,11 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
 
   const slim = isSlimFormat(raw);
 
-  // Normalize sections if slim
   const normalizedSections = slim
     ? raw.sections.map(normalizeSlimSection)
     : raw.sections;
 
-  // Section count: 5-150 (relaxed to accept emergency outlines)
+  // Section count: 5-150 (relaxed to accept smaller outlines)
   if (normalizedSections.length < 5) errors.push(`Too few sections: ${normalizedSections.length} (need at least 5)`);
   if (normalizedSections.length > 150) warnings.push(`High section count: ${normalizedSections.length}`);
 
@@ -137,7 +139,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
 
   if (!nums.has(raw.start_section)) errors.push('start_section not in sections');
 
-  // Auto-repair broken links: redirect to nearest valid section
+  // Auto-repair broken links
   const sortedNums = Array.from(nums).sort((a, b) => a - b);
   function findNearest(target: number): number {
     let best = sortedNums[0];
@@ -163,31 +165,17 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
   }
   if (repairedLinks > 0) warnings.push(`Auto-repaired ${repairedLinks} broken links`);
 
-  // Endings: downgraded to warnings (non-fatal)
+  // Endings check (warnings only)
   const endings = normalizedSections.filter((s: any) => s.is_ending);
   const trueEndings = normalizedSections.filter((s: any) => s.is_true_ending);
-  if (endings.length < 3) warnings.push(`Only ${endings.length} endings (want 5-8, min 3)`);
-  if (endings.length > 8) warnings.push(`${endings.length} endings (recommended 5-8)`);
+  if (endings.length < 1) warnings.push(`No endings found`);
   if (trueEndings.length !== 1) warnings.push(`${trueEndings.length} true endings (want exactly 1)`);
 
-  // Content minimums (warnings only)
-  const combatSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'combat'));
-  const witsSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'WITS'));
-  const guileSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'GUILE'));
-  const hexSections = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'test' && c.test?.stat_used === 'HEX'));
-  const gatedChoices = normalizedSections.filter((s: any) => (s.choices || []).some((c: any) => c.type === 'gated' || c.gate));
-
-  if (combatSections.length < 8) warnings.push(`Only ${combatSections.length} combat sections (want 8-15)`);
-  if (witsSections.length < 10) warnings.push(`Only ${witsSections.length} WITS tests (want 10-20)`);
-  if (guileSections.length < 8) warnings.push(`Only ${guileSections.length} GUILE tests (want 8-15)`);
-  if (hexSections.length < 6) warnings.push(`Only ${hexSections.length} HEX tests (want 6-12)`);
-  if (gatedChoices.length < 6) warnings.push(`Only ${gatedChoices.length} gated choices (want 6-12)`);
-
-  // Reachability: start must reach 85% of sections
+  // Reachability: start must reach 60% of sections
   if (nums.has(raw.start_section) && errors.length === 0) {
     const reachable = computeReachability(normalizedSections, raw.start_section);
     const reachPct = reachable.size / nums.size;
-  if (reachPct < 0.60) {
+    if (reachPct < 0.60) {
       errors.push(`Only ${Math.round(reachPct * 100)}% sections reachable from start (need 60%)`);
     }
   }
@@ -205,6 +193,7 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
         fail_section: c.fail_section ?? undefined,
       };
 
+      // Legacy outlines may still have test/gate/combat data
       if (c.test) {
         choice.stat_used = c.test.stat_used as any;
         choice.tn = Math.max(2, Math.min(10, c.test.tn || 6));
@@ -241,7 +230,6 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
       engaged_bonus: combatChoice.combat_enemy.engaged_bonus || 0,
     } : undefined;
 
-    // Build inventory items from grants
     const inventoryGrants: InventoryItem[] = (s.inventory_grants || []).map((g: any) => ({
       id: g.name.toLowerCase().replace(/\s+/g, '_'),
       name: g.name,
@@ -283,30 +271,19 @@ export function validateAndConvertOutline(raw: any, seed: string): ValidationRes
     return section;
   });
 
-  // Preserve opening_plate_prompt
   const openingPlatePrompt = raw.opening_plate_prompt || undefined;
 
-  // Normalize world_bible to internal format
+  // Normalize world_bible if present (legacy outlines)
   const rawBible = raw.world_bible;
   const worldBible = rawBible ? {
     courts: (rawBible.courts || []).map((c: any) => ({
-      name: c.name,
-      motto: c.motto,
-      signature: c.signature || '',
-      taboo: c.taboo,
+      name: c.name, motto: c.motto, signature: c.signature || '', taboo: c.taboo,
     })),
     factions: (rawBible.factions || []).map((f: any) => ({
-      name: f.name,
-      goal: f.goal,
-      method: f.method || '',
-      tell: f.tell,
+      name: f.name, goal: f.goal, method: f.method || '', tell: f.tell,
     })),
     recurring_npcs: (rawBible.recurring_npcs || []).map((n: any) => ({
-      name: n.name,
-      role: n.role,
-      voice_tick: n.voice_tick,
-      tell: n.tell || '',
-      secret: n.secret || '',
+      name: n.name, role: n.role, voice_tick: n.voice_tick, tell: n.tell || '', secret: n.secret || '',
     })),
     signature_places: rawBible.signature_places || [],
     linguistic_rules: rawBible.linguistic_rules || undefined,

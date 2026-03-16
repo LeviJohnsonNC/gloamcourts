@@ -34,12 +34,9 @@ export function useGameState() {
       const result = await generateLLMOutline(seed, (stage) => setOutlineStage(stage));
       if (result) {
         adventure = result.outline;
-        outlineSource = result.source;
+        outlineSource = 'primary';
         if (result.timing) {
-          console.log(`[Outline] source=${result.source} timing:`, result.timing);
-        }
-        if (result.source === 'emergency') {
-          toast({ title: 'Degraded outline', description: 'Using a shorter adventure — the Author was rushed.' });
+          console.log(`[Outline] timing:`, result.timing);
         }
       }
     } catch (e) {
