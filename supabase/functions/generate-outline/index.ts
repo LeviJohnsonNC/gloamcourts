@@ -162,10 +162,16 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
   }
 
   const data = await response.json();
-  console.log(`  AI body: ${Date.now() - t0}ms`);
+  const finishReason = data.choices?.[0]?.finish_reason || "unknown";
+  console.log(`  AI body: ${Date.now() - t0}ms, finish_reason: ${finishReason}`);
 
   let content = data.choices?.[0]?.message?.content || "";
-  content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+  console.log(`  Content length: ${content.length} chars`);
+  
+  // Strip markdown fences if present
+  if (content.includes("```")) {
+    content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+  }
   if (!content.startsWith("{")) {
     const m = content.match(/\{[\s\S]*\}/);
     if (m) content = m[0];
@@ -174,19 +180,21 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
   try {
     return JSON.parse(content);
   } catch {
-    // Attempt to repair truncated JSON by closing open brackets
-    console.warn("Initial parse failed, attempting truncated JSON repair...");
-    const repaired = repairTruncatedJson(content);
-    if (repaired) {
-      try {
-        const parsed = JSON.parse(repaired);
-        console.log("Truncated JSON repair succeeded");
-        return parsed;
-      } catch {
-        // fall through
+    // If truncated by token limit, try to repair
+    if (finishReason === "length" || !content.endsWith("}")) {
+      console.warn(`Parse failed (finish_reason=${finishReason}), attempting truncated JSON repair...`);
+      const repaired = repairTruncatedJson(content);
+      if (repaired) {
+        try {
+          const parsed = JSON.parse(repaired);
+          console.log(`Truncated JSON repair succeeded: ${parsed.sections?.length || 0} sections`);
+          return parsed;
+        } catch (e2) {
+          console.error("Repair also failed:", (e2 as Error).message);
+        }
       }
     }
-    console.error("Parse failed:", content.substring(0, 300));
+    console.error("Parse failed (len=" + content.length + "):", content.substring(0, 500));
     throw new Error("PARSE_ERROR");
   }
 }
