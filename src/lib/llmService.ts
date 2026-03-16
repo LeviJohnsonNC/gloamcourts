@@ -209,6 +209,7 @@ export async function fetchOrGenerateSection(
       title: data.title || section.title,
       narrator_text: data.narrator_text || '',
       choice_flavor: data.choice_flavor_json || data.choice_flavor || {},
+      choice_mechanics: data.choice_mechanics || undefined,
       plate_caption: data.plate_caption,
       plate_prompt: data.plate_prompt,
       plate_url: data.plate_url,
