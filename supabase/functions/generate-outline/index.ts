@@ -7,25 +7,22 @@ const corsHeaders = {
 };
 
 // Single-tier compact navigation graph prompt (~800-1200 tokens output)
-const SYSTEM_PROMPT = `Return JSON ONLY. No markdown, no explanation.
+const SYSTEM_PROMPT = `Return JSON ONLY. No markdown, no explanation, no commentary.
 
 You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook.
 
 RULES:
-- 12-20 sections. Section numbers n=1..30.
-- 2 choices each (except endings: 0 choices).
-- 2-3 endings. Mark exactly one true_end.
+- 10-15 sections. Section numbers n=1..20.
+- 2 choices each (except endings/deaths: 0 choices).
+- 2 endings. Mark exactly one true_end.
 - 1 twist in act II.
-- Beats should be evocative, max 40 chars. Vary: discovery, dread, negotiation, pursuit, revelation, false calm, aftermath.
+- Beats: evocative, max 30 chars. Labels: max 20 chars.
 - All nx must point to valid n values. ZERO broken links.
 - start_section MUST be 1. First section plate=true.
 - At least 1 death section (death=true, 0 choices).
 
-JSON schema:
-{"title":"str","start_section":1,"sections":[
-  {"n":1,"beat":"str","act":"I"|"II"|"III","plate":bool,"end":bool,"true_end":bool,"twist":bool,"death":bool,
-   "choices":[{"id":"a","label":"str","nx":2}]}
-]}`;
+JSON:
+{"title":"str","start_section":1,"sections":[{"n":1,"beat":"str","act":"I","plate":true,"end":false,"true_end":false,"twist":false,"death":false,"choices":[{"id":"a","label":"str","nx":2},{"id":"b","label":"str","nx":3}]}]}`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -85,7 +82,7 @@ serve(async (req) => {
     let failureReason: string | null = null;
 
     try {
-      outline = await callAI(LOVABLE_API_KEY, SYSTEM_PROMPT, userPrompt, "google/gemini-2.5-flash-lite", 2000, controller.signal);
+      outline = await callAI(LOVABLE_API_KEY, SYSTEM_PROMPT, userPrompt, "google/gemini-2.5-flash-lite", 4096, controller.signal);
       const elapsed = Date.now() - wallClockStart;
       console.log(`[OUTLINE] AI returned in ${elapsed}ms, sections: ${outline?.sections?.length}`);
     } catch (err: any) {
@@ -165,10 +162,16 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
   }
 
   const data = await response.json();
-  console.log(`  AI body: ${Date.now() - t0}ms`);
+  const finishReason = data.choices?.[0]?.finish_reason || "unknown";
+  console.log(`  AI body: ${Date.now() - t0}ms, finish_reason: ${finishReason}`);
 
   let content = data.choices?.[0]?.message?.content || "";
-  content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+  console.log(`  Content length: ${content.length} chars`);
+  
+  // Strip markdown fences if present
+  if (content.includes("```")) {
+    content = content.replace(/^[\s\S]*?```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/i, "").trim();
+  }
   if (!content.startsWith("{")) {
     const m = content.match(/\{[\s\S]*\}/);
     if (m) content = m[0];
@@ -177,9 +180,60 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
   try {
     return JSON.parse(content);
   } catch {
-    console.error("Parse failed:", content.substring(0, 200));
+    // If truncated by token limit, try to repair
+    if (finishReason === "length" || !content.endsWith("}")) {
+      console.warn(`Parse failed (finish_reason=${finishReason}), attempting truncated JSON repair...`);
+      const repaired = repairTruncatedJson(content);
+      if (repaired) {
+        try {
+          const parsed = JSON.parse(repaired);
+          console.log(`Truncated JSON repair succeeded: ${parsed.sections?.length || 0} sections`);
+          return parsed;
+        } catch (e2) {
+          console.error("Repair also failed:", (e2 as Error).message);
+        }
+      }
+    }
+    console.error("Parse failed (len=" + content.length + "):", content.substring(0, 500));
     throw new Error("PARSE_ERROR");
   }
+}
+
+function repairTruncatedJson(json: string): string | null {
+  let s = json.trim();
+  
+  // If it ends mid-string value, close the string
+  let inString = false;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '"' && (i === 0 || s[i-1] !== '\\')) inString = !inString;
+  }
+  if (inString) s += '"';
+  
+  // Find last complete "}" that could end a section object
+  const lastBrace = s.lastIndexOf('}');
+  if (lastBrace <= 0) return null;
+  
+  // Trim to last complete brace, remove trailing comma
+  let trimmed = s.substring(0, lastBrace + 1).replace(/,\s*$/, '');
+  
+  // Count unclosed brackets and braces
+  let braces = 0, brackets = 0;
+  inString = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const c = trimmed[i];
+    if (c === '"' && (i === 0 || trimmed[i-1] !== '\\')) { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{') braces++;
+    else if (c === '}') braces--;
+    else if (c === '[') brackets++;
+    else if (c === ']') brackets--;
+  }
+  
+  // Close remaining open brackets then braces
+  for (let i = 0; i < brackets; i++) trimmed += ']';
+  for (let i = 0; i < braces; i++) trimmed += '}';
+  
+  return trimmed;
 }
 
 function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean; errors: string[]; warnings: string[]; repaired: number } {
