@@ -31,8 +31,8 @@ export async function generateLLMOutline(
 
     onStage?.('plotting');
     const controller = new AbortController();
-    // 50s client timeout — backend has 25s + 15s tiers
-    const timeout = setTimeout(() => controller.abort(), 50_000);
+    // 30s client timeout — backend single-tier with 20s budget
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
