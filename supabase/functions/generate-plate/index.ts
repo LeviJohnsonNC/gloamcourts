@@ -75,9 +75,43 @@ serve(async (req) => {
     }
 
     const data = await response.json();
-    const imageData = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+    let imageData = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+
+    // Path 6: Deep recursive search for any base64 image data in the response
+    if (!imageData) {
+      function findImageDeep(obj: any, depth = 0): string | null {
+        if (depth > 10) return null;
+        if (typeof obj === 'string') {
+          if (obj.startsWith('data:image')) return obj;
+          // Detect raw base64 (at least 1000 chars, valid base64 alphabet)
+          if (obj.length > 1000 && /^[A-Za-z0-9+/\n]+=*$/.test(obj.substring(0, 100))) {
+            return `data:image/png;base64,${obj}`;
+          }
+        }
+        if (Array.isArray(obj)) {
+          for (const item of obj) {
+            const found = findImageDeep(item, depth + 1);
+            if (found) return found;
+          }
+        }
+        if (obj && typeof obj === 'object') {
+          for (const val of Object.values(obj)) {
+            const found = findImageDeep(val, depth + 1);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+      imageData = findImageDeep(data);
+      if (imageData) console.log("[plate] Extracted image via deep recursive search");
+    }
 
     if (!imageData) {
+      console.error("[plate] No image found. Full response structure:", JSON.stringify(data, (key, val) => {
+        // Truncate long strings (likely base64) to avoid log flooding
+        if (typeof val === 'string' && val.length > 200) return val.substring(0, 200) + `...[${val.length} chars]`;
+        return val;
+      }, 2));
       return new Response(JSON.stringify({ error: "no_image", message: "No image was generated." }), {
         status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

@@ -224,11 +224,15 @@ export async function generatePlate(
 ): Promise<string | null> {
   try {
     const headers = await getAuthHeaders();
+    const plateController = new AbortController();
+    const plateTimeout = setTimeout(() => plateController.abort(), 45_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-plate`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ runId, sectionNumber, platePrompt, plateCaption }),
+      signal: plateController.signal,
     });
+    clearTimeout(plateTimeout);
 
     if (!resp.ok) {
       console.error('Plate generation failed:', resp.status);
