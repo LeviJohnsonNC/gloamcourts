@@ -1,52 +1,77 @@
 
 
-## Why It's Still Timing Out
+## Diagnosis
 
-The logs tell the full story:
-- **AI headers arrive at 20s** (status 200 — the model accepted the request)
-- **AI full body arrives at 55s** (the response is streaming slowly)
-- **Wall-clock timeout fires at 45s** — before the body finishes
-- **T2 (emergency) never gets a chance** because the T1 `callAI` is still consuming the response body when the wall-clock kills everything
+**Root cause**: T1 always fails with `PARSE_ERROR`, not timeout. The PRIMARY_SYSTEM prompt demands a massive JSON schema (world_bible with courts/factions/NPCs/places, complex choice objects with test/gate/enemy sub-objects, inventory arrays) that exceeds the 4000 token cap. The model's output gets truncated mid-JSON, parsing fails, and it falls back to T2 every single time.
 
-The two-tier strategy is broken: `Promise.race` rejects T1 at 25s, but the pending `response.json()` call keeps the event loop busy. The 45s wall-clock fires while T1's body is still downloading, leaving zero time for T2.
+T2 succeeds in ~2.5s but produces trivially generic content ("You see a door", "A monster!") because its prompt has zero thematic context. This triggers the "Degraded outline" toast.
 
-## The Fix: AbortController + Parallel Racing
+**Evidence from logs**:
+- `Parse failed: { "title": "The Gloam Courts", "seed": "mmsh76ad", "start_section": 1, "required_codex_keys": ["the_cinder_crown","the_grey_protocol","the_echo_vault","the_liminal_threshol` — truncated JSON
+- T1 took 11.3s (not a timeout — it completed but output was unparseable)
+- T2 returned generic 8-section outline in 2.5s
 
-### 1. `supabase/functions/generate-outline/index.ts`
+**The real problem is architectural**: the outline prompt asks for too much data upfront. Most of it (world_bible, combat stats, test parameters, inventory, gates) is never used at outline time — it's only consumed later by `generate-section`.
 
-**Use AbortController to actually kill the fetch**, not just race against it. When T1's 25s budget expires, abort the HTTP connection so the body download stops immediately. Then T2 gets a clean 15s window.
+## Solution: Single-tier "navigation graph" outline + progressive enrichment
 
-```text
-Timeline target:
-  0s ──── T1 fetch starts (AbortController, 25s signal)
-  20s ─── headers arrive
-  25s ─── AbortController fires, fetch CANCELLED
-  25s ─── T2 fetch starts (AbortController, 15s signal)
-  ~35s ── T2 completes (8-12 sections, tiny payload)
-  <45s ── Response returned
+### Core idea
+The outline only needs to be a **navigation graph with thematic beats**. All mechanical richness (choice types, combat, tests, gates, items, world_bible) gets determined when `generate-section` is called for each section. This means:
+- One prompt, one tier, reliably fits in ~1500 tokens of output
+- No "degraded" path — every outline is the same quality
+- `generate-section` already creates all the prose, flavor, and plate prompts — it can also assign mechanics
+
+### Changes
+
+**1. `supabase/functions/generate-outline/index.ts` — Complete rewrite of prompt + remove tiered system**
+
+Replace PRIMARY_SYSTEM and EMERGENCY_SYSTEM with a single compact system prompt:
+```
+Return JSON ONLY. Gothic gamebook outline for "The Gloam Courts" (dark comedy).
+12-20 sections. n=1..30. 2 choices each (except endings: 0 choices).
+2-3 endings. Mark one true_end. 1 twist in act II.
+Beats should be evocative (max 40 chars). Vary: discovery, dread, negotiation, pursuit, revelation.
+All nx must point to valid n values.
+
+JSON: {"title":"str","start_section":1,"sections":[
+  {"n":1,"beat":"str","act":"I"|"II"|"III","plate":bool,"end":bool,"true_end":bool,"twist":bool,"death":bool,
+   "choices":[{"id":"a","label":"str","t":"free","nx":2}]}
+]}
 ```
 
-Key changes in `callAI`:
-- Accept an `AbortSignal` parameter and pass it to `fetch()`
-- Each tier creates its own `AbortController` with its budget
-- When the timeout fires, `controller.abort()` kills the in-flight request immediately
+Key differences from current:
+- No world_bible (generate-section already handles NPC/place references via its own system prompt)
+- No complex choice types (test/combat/gated) — all choices are `"t":"free"` with `nx` only
+- No inventory, no enemy objects, no gate objects, no test objects
+- No codex/end_key fields
+- Target output: ~800-1200 tokens (vs current 4000+ that truncates)
 
-### 2. Shrink Emergency Prompt Further
+Remove T1/T2 tiering entirely. Single call with 15s AbortController, 2000 max_tokens.
 
-The current emergency prompt still asks for a JSON schema with `world_bible`, `required_codex_keys`, etc. Strip it to absolute minimum — just `title`, `start_section`, `sections[]` with `n`, `beat`, `choices[]`. Target ~500 tokens of output for T2 (currently it's producing thousands).
+**2. `src/lib/outlineValidator.ts` — Remove mechanical warnings**
 
-### 3. Add `max_tokens` to AI Requests
+Remove or silence all warnings about combat count, WITS tests, GUILE tests, HEX tests, gated choices — these no longer come from the outline. The outline only provides the graph shape.
 
-Set `max_tokens: 4000` for T1 and `max_tokens: 1500` for T2. This caps the response size and prevents the model from generating an unexpectedly large output that takes forever to stream.
+**3. `src/hooks/useGameState.tsx` — Remove "degraded" toast**
 
-### Files to Modify
+Remove the `source === 'emergency'` toast since there's only one generation tier. Remove the `outline_source` distinction.
 
-- **`supabase/functions/generate-outline/index.ts`** — Add `AbortController` to `callAI`, set `max_tokens` on both tiers, strip emergency prompt, fix the race logic so T2 actually runs
-- No client-side changes needed — the client already handles `503` and falls back
+**4. `src/lib/llmService.ts` — Simplify OutlineResult**
 
-### Expected Result
-- T1 either completes in <25s or is hard-killed at 25s
-- T2 gets a clean 15s window with a tiny prompt
-- Total wall-clock stays under 45s
-- If both fail, client gets `503` and uses demo fallback (but T2 should succeed consistently with such a small prompt)
+Remove the `source` field distinction (or keep it as 'primary' always). Remove the degraded toast logic. Reduce client timeout from 50s to 30s.
+
+**5. `supabase/functions/generate-section/index.ts` — Add mechanical enrichment**
+
+Update the section generation prompt to also determine choice mechanics based on act/beat context. Add to the system prompt:
+- For each choice, determine if it should be `free`, `test` (with stat/TN), `combat`, or `gated`
+- Output additional `choice_mechanics` field in the JSON response
+- The client then merges these mechanics into the section's choices
+
+This is the progressive enrichment — mechanics are assigned per-section when the player reaches that node, not upfront.
+
+### Expected result
+- Outline generation: single call, ~3-8s, always succeeds, no "degraded" message
+- Thematic variety: the prompt focuses on evocative beats rather than mechanical scaffolding
+- Same gameplay depth: mechanics are determined per-section by `generate-section`
+- No more PARSE_ERROR failures from truncated JSON
 
