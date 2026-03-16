@@ -57,12 +57,34 @@ OUTPUT strict JSON only:
   "title": string,
   "narrator_text": string,
   "choice_flavor": { [choice_id]: string },
+  "choice_mechanics": { [choice_id]: {
+    "t": "free"|"test"|"combat"|"gated",
+    "stat": "STEEL"|"GUILE"|"WITS"|"GRACE"|"HEX"|null,
+    "tn": number|null,
+    "opp": number|null,
+    "stakes": "safe"|"risky"|"bleak"|"tempting"|"unknown"|null,
+    "enemy": {"name":string,"pool":number,"tn":number,"hp":number,"eng":number,"boss":boolean}|null,
+    "gate_tag": string|null
+  }},
   "plate_caption": string|null,
   "plate_prompt": string|null,
   "epitaph_prompt": string|null,
   "beat_tag": string,
   "device_tag": string
-}`;
+}
+
+MECHANICAL ENRICHMENT RULES:
+- For each choice, decide its mechanic type based on context:
+  - Act I: mostly "free", maybe 1 "test" (easy, tn=4-5)
+  - Act II: mix of "test" (tn=5-7), "combat", and "gated"
+  - Act III: harder "test" (tn=7-9), boss "combat", "gated" by clues
+- Boss sections → at least one "combat" choice with boss=true
+- Twist sections → keep choices "free" (the twist IS the drama)
+- Death sections → no choices needed
+- If "test": pick the stat that fits the beat (investigation→WITS, social→GUILE, physical→STEEL, stealth→GRACE, supernatural→HEX)
+- If "gated": set gate_tag to an item tag like "Key", "Seal", "Holy"
+- If "combat": provide enemy stats (pool 2-6, tn 4-7, hp 3-10)
+- NOT every choice needs mechanics. A good adventure is ~40% free, ~30% test, ~20% combat, ~10% gated`;
 
 function validateNarration(text: string, snapshot: any): { valid: boolean; failures: string[] } {
   const failures: string[] = [];
