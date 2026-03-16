@@ -174,10 +174,71 @@ async function callAI(apiKey: string, system: string, prompt: string, model: str
   try {
     return JSON.parse(content);
   } catch {
-    console.error("Parse failed:", content.substring(0, 200));
+    // Attempt to repair truncated JSON by closing open brackets
+    console.warn("Initial parse failed, attempting truncated JSON repair...");
+    const repaired = repairTruncatedJson(content);
+    if (repaired) {
+      try {
+        const parsed = JSON.parse(repaired);
+        console.log("Truncated JSON repair succeeded");
+        return parsed;
+      } catch {
+        // fall through
+      }
+    }
+    console.error("Parse failed:", content.substring(0, 300));
     throw new Error("PARSE_ERROR");
   }
 }
+
+function repairTruncatedJson(json: string): string | null {
+  // Find the last complete section object by finding last "}," or "}" before truncation
+  // Strategy: close all open brackets/braces
+  let s = json.trim();
+  
+  // If it ends mid-string, close the string
+  const quoteCount = (s.match(/(?<!\\)"/g) || []).length;
+  if (quoteCount % 2 !== 0) s += '"';
+  
+  // Count open brackets and braces
+  let braces = 0, brackets = 0;
+  let inString = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' && (i === 0 || s[i-1] !== '\\')) { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === '{') braces++;
+    if (c === '}') braces--;
+    if (c === '[') brackets++;
+    if (c === ']') brackets--;
+  }
+  
+  // Try to truncate to last complete section, then close
+  // Find last complete "}" that could end a section
+  const lastCompleteSection = s.lastIndexOf('}');
+  if (lastCompleteSection > 0) {
+    // Trim to there, remove trailing comma
+    let trimmed = s.substring(0, lastCompleteSection + 1).replace(/,\s*$/, '');
+    
+    // Recount
+    braces = 0; brackets = 0; inString = false;
+    for (let i = 0; i < trimmed.length; i++) {
+      const c = trimmed[i];
+      if (c === '"' && (i === 0 || trimmed[i-1] !== '\\')) { inString = !inString; continue; }
+      if (inString) continue;
+      if (c === '{') braces++;
+      if (c === '}') braces--;
+      if (c === '[') brackets++;
+      if (c === ']') brackets--;
+    }
+    
+    // Close remaining open brackets/braces
+    for (let i = 0; i < brackets; i++) trimmed += ']';
+    for (let i = 0; i < braces; i++) trimmed += '}';
+    
+    return trimmed;
+  }
+  return null;
 
 function validateAndRepairOutline(o: any, minSections: number): { fatal: boolean; errors: string[]; warnings: string[]; repaired: number } {
   const errors: string[] = [];
