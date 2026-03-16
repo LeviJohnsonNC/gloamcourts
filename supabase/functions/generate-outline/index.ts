@@ -7,25 +7,22 @@ const corsHeaders = {
 };
 
 // Single-tier compact navigation graph prompt (~800-1200 tokens output)
-const SYSTEM_PROMPT = `Return JSON ONLY. No markdown, no explanation.
+const SYSTEM_PROMPT = `Return JSON ONLY. No markdown, no explanation, no commentary.
 
 You are the Outline Architect for "The Gloam Courts," a dark-comedy gothic gamebook.
 
 RULES:
-- 12-20 sections. Section numbers n=1..30.
-- 2 choices each (except endings: 0 choices).
-- 2-3 endings. Mark exactly one true_end.
+- 10-15 sections. Section numbers n=1..20.
+- 2 choices each (except endings/deaths: 0 choices).
+- 2 endings. Mark exactly one true_end.
 - 1 twist in act II.
-- Beats should be evocative, max 40 chars. Vary: discovery, dread, negotiation, pursuit, revelation, false calm, aftermath.
+- Beats: evocative, max 30 chars. Labels: max 20 chars.
 - All nx must point to valid n values. ZERO broken links.
 - start_section MUST be 1. First section plate=true.
 - At least 1 death section (death=true, 0 choices).
 
-JSON schema:
-{"title":"str","start_section":1,"sections":[
-  {"n":1,"beat":"str","act":"I"|"II"|"III","plate":bool,"end":bool,"true_end":bool,"twist":bool,"death":bool,
-   "choices":[{"id":"a","label":"str","nx":2}]}
-]}`;
+JSON:
+{"title":"str","start_section":1,"sections":[{"n":1,"beat":"str","act":"I","plate":true,"end":false,"true_end":false,"twist":false,"death":false,"choices":[{"id":"a","label":"str","nx":2},{"id":"b","label":"str","nx":3}]}]}`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
