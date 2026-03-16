@@ -82,7 +82,7 @@ serve(async (req) => {
     let failureReason: string | null = null;
 
     try {
-      outline = await callAI(LOVABLE_API_KEY, SYSTEM_PROMPT, userPrompt, "google/gemini-2.5-flash-lite", 2000, controller.signal);
+      outline = await callAI(LOVABLE_API_KEY, SYSTEM_PROMPT, userPrompt, "google/gemini-2.5-flash-lite", 4096, controller.signal);
       const elapsed = Date.now() - wallClockStart;
       console.log(`[OUTLINE] AI returned in ${elapsed}ms, sections: ${outline?.sections?.length}`);
     } catch (err: any) {
