@@ -17,7 +17,6 @@ async function getAuthHeaders() {
 
 export interface OutlineResult {
   outline: AdventureOutline;
-  source: 'primary' | 'emergency' | 'demo';
   failureReason?: string | null;
   timing?: Record<string, number>;
 }
