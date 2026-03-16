@@ -162,6 +162,57 @@ const BookReader: React.FC = () => {
   }, [runId, user]);
 
   // Fetch/generate narration when section changes
+  // Apply choice_mechanics from generate-section to enrich outline choices
+  const applyChoiceMechanics = useCallback((section: any, mechanics: Record<string, any>) => {
+    if (!section || !mechanics || !outline) return;
+    section.choices.forEach((choice: any, i: number) => {
+      const key = `choice_${i}`;
+      const mech = mechanics[key] || mechanics[choice.label];
+      if (!mech) return;
+      
+      if (mech.t && mech.t !== 'free') {
+        choice.type = mech.t;
+        if (mech.t === 'test' && mech.stat) {
+          choice.stat_used = mech.stat;
+          choice.tn = mech.tn || 6;
+          choice.opposing_pool = mech.opp || undefined;
+          choice.stakes = mech.stakes || 'unknown';
+          choice.base_pool = 3;
+          const contextMap: Record<string, string> = { GUILE: 'social', WITS: 'investigation', HEX: 'hex', GRACE: 'stealth', STEEL: 'endurance' };
+          choice.roll_context = contextMap[mech.stat] || 'general';
+          // For tests: split nx into success/fail if not already split
+          if (choice.next_section && !choice.success_section) {
+            choice.success_section = choice.next_section;
+            // Find an alternate section for failure (next sequential or same)
+            const sectionIdx = outline.sections.findIndex((s: any) => s.section_number === section.section_number);
+            const nextSections = section.choices.filter((_: any, j: number) => j !== i).map((c: any) => c.next_section).filter(Boolean);
+            choice.fail_section = nextSections[0] || choice.next_section;
+          }
+        }
+        if (mech.t === 'combat' && mech.enemy) {
+          section.combat_enemy = {
+            name: mech.enemy.name,
+            pool: Math.max(1, Math.min(8, mech.enemy.pool)),
+            tn: Math.max(2, Math.min(10, mech.enemy.tn)),
+            health: Math.max(2, Math.min(12, mech.enemy.hp)),
+            stance: 'Guarded' as const,
+            is_boss: mech.enemy.boss || false,
+            description: mech.enemy.name,
+            engaged_bonus: mech.enemy.eng || 0,
+          };
+          if (choice.next_section && !choice.success_section) {
+            choice.success_section = choice.next_section;
+            const nextSections = section.choices.filter((_: any, j: number) => j !== i).map((c: any) => c.next_section).filter(Boolean);
+            choice.fail_section = nextSections[0] || choice.next_section;
+          }
+        }
+        if (mech.t === 'gated' && mech.gate_tag) {
+          choice.required_item_tag = mech.gate_tag;
+        }
+      }
+    });
+  }, [outline]);
+
   useEffect(() => {
     if (!currentSection || !gameState || !outline) {
       setCachedNarration(null);
@@ -170,6 +221,9 @@ const BookReader: React.FC = () => {
     setLoadingNarration(true);
     fetchOrGenerateSection(gameState.run_id, currentSection, gameState, outline)
       .then(result => {
+        if (result?.choice_mechanics) {
+          applyChoiceMechanics(currentSection, result.choice_mechanics);
+        }
         setCachedNarration(result);
         setLoadingNarration(false);
       })

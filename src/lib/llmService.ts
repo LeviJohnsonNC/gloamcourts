@@ -17,7 +17,6 @@ async function getAuthHeaders() {
 
 export interface OutlineResult {
   outline: AdventureOutline;
-  source: 'primary' | 'emergency' | 'demo';
   failureReason?: string | null;
   timing?: Record<string, number>;
 }
@@ -32,8 +31,8 @@ export async function generateLLMOutline(
 
     onStage?.('plotting');
     const controller = new AbortController();
-    // 50s client timeout — backend has 25s + 15s tiers
-    const timeout = setTimeout(() => controller.abort(), 50_000);
+    // 30s client timeout — backend single-tier with 20s budget
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     const resp = await fetch(`${FUNCTIONS_URL}/generate-outline`, {
       method: 'POST',
       headers,
@@ -58,11 +57,10 @@ export async function generateLLMOutline(
     onStage?.('binding');
     const respJson = await resp.json();
     const raw = respJson.outline;
-    const outlineSource = respJson.outline_source || 'primary';
     const timing = respJson.timing;
     
     if (timing) {
-      console.log(`[Telemetry] source=${outlineSource} t1=${timing.t1_ms}ms t2=${timing.t2_ms}ms total=${timing.total_ms}ms`);
+      console.log(`[Telemetry] total=${timing.total_ms}ms`);
     }
     
     const result = validateAndConvertOutline(raw, seed);
@@ -80,7 +78,6 @@ export async function generateLLMOutline(
     onStage?.('sealing');
     return {
       outline: result.outline,
-      source: outlineSource as 'primary' | 'emergency',
       failureReason: respJson.failure_reason,
       timing,
     };
@@ -94,6 +91,15 @@ export interface CachedSection {
   title: string;
   narrator_text: string;
   choice_flavor: Record<string, string>;
+  choice_mechanics?: Record<string, {
+    t: 'free' | 'test' | 'combat' | 'gated';
+    stat?: string | null;
+    tn?: number | null;
+    opp?: number | null;
+    stakes?: string | null;
+    enemy?: { name: string; pool: number; tn: number; hp: number; eng: number; boss: boolean } | null;
+    gate_tag?: string | null;
+  }>;
   plate_caption: string | null;
   plate_prompt: string | null;
   plate_url: string | null;
@@ -203,6 +209,7 @@ export async function fetchOrGenerateSection(
       title: data.title || section.title,
       narrator_text: data.narrator_text || '',
       choice_flavor: data.choice_flavor_json || data.choice_flavor || {},
+      choice_mechanics: data.choice_mechanics || undefined,
       plate_caption: data.plate_caption,
       plate_prompt: data.plate_prompt,
       plate_url: data.plate_url,
